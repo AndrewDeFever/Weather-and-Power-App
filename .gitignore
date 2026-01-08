@@ -24,4 +24,4 @@ Thumbs.db
 
 # Proprietary site data (DO NOT COMMIT)
 app/data/sites_*.json
-app/data/*sites*.json
+app/data/sites*.json
