@@ -1,1 +1,8 @@
+fastapi
+starlette
+pydantic
 mangum
+requests
+mercantile
+polyline
+uvicorn

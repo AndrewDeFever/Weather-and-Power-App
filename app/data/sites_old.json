@@ -1,0 +1,101 @@
+{
+  "CRPOKOKCYIC": {
+    "site_id": "CRPOKOKCYIC",
+    "name": "Oklahoma City Information Center",
+    "city": "Oklahoma City",
+    "state": "OK",
+    "utility": "OGE",
+    "lat": 35.47121,
+    "lon": -97.51817526
+  },
+  "CRPOKNRMNSC": {
+    "site_id": "CRPOKNRMNSC",
+    "name": "Norman Service Center",
+    "city": "Norman",
+    "state": "OK",
+    "utility": "OGE",
+    "lat": 35.2265,
+    "lon": -97.45866256
+  },
+  "CRPOKSHWNSC": {
+    "site_id": "CRPOKSHWNSC",
+    "name": "Shawnee Service Center",
+    "city": "Shawnee",
+    "state": "OK",
+    "utility": "OGE",
+    "lat": 35.34683,
+    "lon": -96.9303256
+  },
+    "CRPOKTULSHQ": {
+    "site_id": "CRPOKTULSHQ",
+    "name": "Tulsa HQ",
+    "city": "Tulsa",
+    "state": "OK",
+    "utility": "PSO",
+    "lat": 36.15224,
+    "lon": -95.98956256
+  },
+    "CRPOKTULSSC": {
+    "site_id": "CRPOKTULSSC",
+    "name": "Tulsa SC",
+    "city": "Tulsa",
+    "state": "OK",
+    "utility": "PSO",
+    "lat": 36.14011,
+    "lon": -95.81128256
+  },
+  "CRPOKMSKGSC": {
+    "site_id": "CRPOKMSKGSC",
+    "name": "Muskogee Service Center",
+    "city": "Muskogee",
+    "state": "OK",
+    "utility": "PSO",
+    "lat": 35.74084,
+    "lon": -95.39701256
+  },
+  "CRPOKTULSAIR2": {
+    "site_id": "CRPOKTULSAIR2",
+    "name": "Tulsa Airport",
+    "city": "Tulsa",
+    "state": "OK",
+    "utility": "PSO",
+    "lat": 36.21421,
+    "lon": -95.88498256
+  },
+  "CRPOKEKCYSC": {
+    "site_id": "CRPOKEKCYSC",
+    "name": "Elk City Service Center",
+    "city": "Elk City",
+    "state": "OK",
+    "utility": "PSO",
+    "lat": 35.42702,
+    "lon": -99.39026256
+  },  
+  "CRPKSOVPKSC": {
+    "site_id": "CRPKSOVPKSC",
+    "name": "Overland Park Service Center",
+    "city": "Overland Park",
+    "state": "KS",
+    "utility": "EVERGY",
+    "lat": 38.96621,
+    "lon": -94.71599256
+  },
+  "CRPKSKSCYFG": {
+    "site_id": "CRPKSKSCYFG",
+    "name": "Kansas City Fleet Garage",
+    "city": "Kansas City",
+    "state": "KS",
+    "utility": "EVERGY",
+    "lat": 39.1202,
+    "lon": -94.61566256
+  },
+  "TEST": {
+    "site_id": "TEST",
+    "name": "Arlington Test Site",
+    "city": "Arlington",
+    "state": "TX",
+    "utility": "ONCOR",
+    "lat": 32.733512,
+    "lon": -97.105343
+  }    
+}

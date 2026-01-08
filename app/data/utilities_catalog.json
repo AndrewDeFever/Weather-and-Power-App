@@ -1,0 +1,18 @@
+{
+  "EVERGY": {
+    "name": "Evergy",
+    "serviceareas_url": "file:./evergy_serviceareas.json"
+  },
+  "OGE": {
+    "name": "OG&E",
+    "serviceareas_url": "https://kubra.io/regions/9aac81ee-93a5-4b86-9dc5-93424acc1768/638880d8-38ea-4a2e-a11d-823cbc72703f/serviceareas.json"
+  },
+  "PSO": {
+    "name": "PSO",
+    "serviceareas_url": "https://kubra.io/regions/96df7d51-381a-4d6d-859e-29ff1bcc74ca/1bf92c09-c41a-455b-996c-f36bcbb5a1a4/serviceareas.json"
+  },
+  "ONCOR": {
+    "name": "Oncor",
+    "serviceareas_url": "https://kubra.io/regions/117dfbaa-4ce1-4119-8667-a328993083e1/a05c6257-beb4-4b4c-bc23-e973aa40798e/serviceareas.json"
+  }
+}
