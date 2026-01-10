@@ -34,6 +34,9 @@ jobs:
       - name: SAM Build
         run: sam build
 
+      - name: SAM Validate
+        run: sam validate
+
       - name: SAM Deploy
         run: |
           sam deploy \
