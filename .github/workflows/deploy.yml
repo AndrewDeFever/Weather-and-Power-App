@@ -39,6 +39,7 @@ jobs:
           sam deploy \
             --stack-name weather-power-status \
             --region us-east-1 \
+            --s3-bucket weathernpowerapp \
             --capabilities CAPABILITY_IAM \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset
