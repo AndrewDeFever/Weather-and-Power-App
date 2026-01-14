@@ -53,4 +53,6 @@ jobs:
           aws cloudformation describe-stack-events \
             --stack-name weather-power-status \
             --max-items 50
+      - name: Continue rollback (only if needed)
+        run: aws cloudformation continue-update-rollback --stack-name weather-power-status
 
