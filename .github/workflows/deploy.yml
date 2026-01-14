@@ -47,4 +47,10 @@ jobs:
             --role-arn arn:aws:iam::042889969210:role/weather-power-status-cfn-exec \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset
+      - name: Dump CloudFormation events on failure
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name weather-power-status \
+            --max-items 50
 
