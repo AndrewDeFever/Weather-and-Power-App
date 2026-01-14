@@ -23,6 +23,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+          aws configure list
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -32,7 +37,7 @@ jobs:
         uses: aws-actions/setup-sam@v2
 
       - name: SAM Build
-        run: sam build
+        run: sam build --debug
 
       - name: SAM Validate
         run: sam validate
@@ -46,13 +51,23 @@ jobs:
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --role-arn arn:aws:iam::042889969210:role/weather-power-status-cfn-exec \
             --no-confirm-changeset \
-            --no-fail-on-empty-changeset
+            --no-fail-on-empty-changeset \
+            --debug
+
       - name: Dump CloudFormation events on failure
         if: failure()
         run: |
           aws cloudformation describe-stack-events \
             --stack-name weather-power-status \
             --max-items 50
-      - name: Continue rollback (only if needed)
-        run: aws cloudformation continue-update-rollback --stack-name weather-power-status
 
+      - name: Continue rollback only if needed
+        if: failure()
+        run: |
+          STATUS=$(aws cloudformation describe-stacks --stack-name weather-power-status --query "Stacks[0].StackStatus" --output text)
+          echo "Current stack status: $STATUS"
+          if [[ "$STATUS" == "UPDATE_ROLLBACK_FAILED" || "$STATUS" == "UPDATE_ROLLBACK_IN_PROGRESS" ]]; then
+            aws cloudformation continue-update-rollback --stack-name weather-power-status
+          else
+            echo "No rollback action required."
+          fi
