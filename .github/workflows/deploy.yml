@@ -43,6 +43,8 @@ jobs:
             --stack-name weather-power-status \
             --region us-east-1 \
             --s3-bucket weathernpowerapp \
-            --capabilities CAPABILITY_IAM \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --role-arn arn:aws:iam::042889969210:role/weather-power-status-cfn-exec \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset
+
