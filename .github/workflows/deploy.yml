@@ -71,3 +71,17 @@ jobs:
           else
             echo "No rollback action required."
           fi
+      - name: Show stack status
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name weather-power-status \
+            --query "Stacks[0].StackStatus" \
+            --output text || true
+
+      - name: Tail recent stack events
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name weather-power-status \
+            --max-items 30 \
+            --query "StackEvents[].[Timestamp,ResourceStatus,LogicalResourceId,ResourceType,ResourceStatusReason]" \
+            --output table || true
