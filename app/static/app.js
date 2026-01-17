@@ -246,6 +246,20 @@
       ov_kv.innerHTML = "";
       ov_kv.appendChild(kvRow("Resolved type", data?.resolved?.type ?? "—"));
       ov_kv.appendChild(kvRow("Site ID", siteId));
+
+      // Address (new): under Site ID, above Coordinates
+      const addr = data?.resolved?.address;
+      const city = data?.resolved?.city;
+      const state = data?.resolved?.state;
+      const zip = data?.resolved?.zip;
+
+      let addressLine = "—";
+      if (addr || city || state || zip){
+        const line2 = [city, state, zip].filter(Boolean).join(" ");
+        addressLine = [addr, line2].filter(Boolean).join(", ");
+      }
+      ov_kv.appendChild(kvRow("Address", addressLine));
+
       ov_kv.appendChild(kvRow("Coordinates", `${lat}, ${lon}`));
       ov_kv.appendChild(kvRow("Utility", utility));
       ov_kv.appendChild(kvRow("Weather", (temp !== null && temp !== undefined) ? `${temp}°F, ${cond}` : cond));
