@@ -122,6 +122,7 @@ def load_sites() -> Dict[str, Dict[str, Any]]:
             "lon": to_float(s.get("lon")),
             "utility": (s.get("utility") or "").strip().upper() or None,
             "sev": s.get("sev") or s.get("severity"),
+            # --- Added: address fields passthrough from sites.json
             "address": s.get("address"),
             "city": s.get("city"),
             "state": s.get("state"),
@@ -129,7 +130,6 @@ def load_sites() -> Dict[str, Dict[str, Any]]:
             "enabled": s.get("enabled", True),
             "tz": s.get("tz"),
         }
-
     return out
 
 
@@ -272,19 +272,19 @@ def api_status(
             }
 
         site_utility = site.get("utility")
+        # --- Added: include address fields in resolved payload for site lookups
         resolved = {
-                "type": "site",
-                "name": site.get("name") or sid,
-                "site_id": sid,
-                "address": site.get("address"),
-                "city": site.get("city"),
-                "state": site.get("state"),
-                "zip": site.get("zip"),
-                "lat": site.get("lat"),
-                "lon": site.get("lon"),
-                "utility": site_utility,
-            }
-
+            "type": "site",
+            "name": site.get("name") or sid,
+            "site_id": sid,
+            "address": site.get("address"),
+            "city": site.get("city"),
+            "state": site.get("state"),
+            "zip": site.get("zip"),
+            "lat": site.get("lat"),
+            "lon": site.get("lon"),
+            "utility": site_utility,
+        }
 
     lat = to_float(resolved.get("lat"))
     lon = to_float(resolved.get("lon"))
