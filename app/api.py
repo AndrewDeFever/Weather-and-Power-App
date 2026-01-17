@@ -122,11 +122,14 @@ def load_sites() -> Dict[str, Dict[str, Any]]:
             "lon": to_float(s.get("lon")),
             "utility": (s.get("utility") or "").strip().upper() or None,
             "sev": s.get("sev") or s.get("severity"),
+            "address": s.get("address"),
             "city": s.get("city"),
             "state": s.get("state"),
+            "zip": s.get("zip"),
             "enabled": s.get("enabled", True),
             "tz": s.get("tz"),
         }
+
     return out
 
 
