@@ -272,7 +272,19 @@ def api_status(
             }
 
         site_utility = site.get("utility")
-        resolved = {"type": "site", "name": site.get("name") or sid, "site_id": sid, "lat": site.get("lat"), "lon": site.get("lon"), "utility": site_utility}
+        resolved = {
+                "type": "site",
+                "name": site.get("name") or sid,
+                "site_id": sid,
+                "address": site.get("address"),
+                "city": site.get("city"),
+                "state": site.get("state"),
+                "zip": site.get("zip"),
+                "lat": site.get("lat"),
+                "lon": site.get("lon"),
+                "utility": site_utility,
+            }
+
 
     lat = to_float(resolved.get("lat"))
     lon = to_float(resolved.get("lon"))
