@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.power_router import get_power_status, probe_power_status
 
-app = FastAPI(title="Weather & Power Status", version="0.8.0")
+app = FastAPI(title="Weather & Power Status", version="0.8.1")
 
 
 # ----------------------------
@@ -118,6 +118,10 @@ def mps_to_mph(mps: float) -> float:
     return mps * 2.2369362920544
 
 
+def kmh_to_mph(kmh: float) -> float:
+    return kmh * 0.621371192237334
+
+
 def mm_to_in(mm: float) -> float:
     return mm / 25.4
 
@@ -133,6 +137,27 @@ def deg_to_cardinal(deg: Optional[float]) -> Optional[str]:
             "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
     idx = int((d + 11.25) // 22.5) % 16
     return dirs[idx]
+
+
+def to_mph(value: Any, unit_code: Any) -> Optional[float]:
+    """
+    Convert an NWS observation numeric 'value' to mph using the provided unitCode.
+
+    Known seen in the wild:
+      - wmoUnit:m_s-1
+      - wmoUnit:km_h-1
+
+    If the unit is unknown, return None rather than emitting a wrong mph value.
+    """
+    v = to_float(value)
+    if v is None:
+        return None
+    uc = (unit_code or "").strip()
+    if "m_s-1" in uc:
+        return mps_to_mph(v)
+    if "km_h-1" in uc:
+        return kmh_to_mph(v)
+    return None
 
 
 # ----------------------------
@@ -231,14 +256,16 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
             # Condition text
             out["condition"] = obs_props.get("textDescription") or out["condition"]
 
-            # Wind speed / gust (m/s -> mph)
-            wind_mps = (obs_props.get("windSpeed") or {}).get("value")
-            if wind_mps is not None:
-                out["wind_speed_mph"] = int(round(mps_to_mph(float(wind_mps))))
+            # Wind speed / gust (UNIT-AWARE -> mph)
+            ws = obs_props.get("windSpeed") or {}
+            ws_mph = to_mph(ws.get("value"), ws.get("unitCode"))
+            if ws_mph is not None:
+                out["wind_speed_mph"] = int(round(ws_mph))
 
-            gust_mps = (obs_props.get("windGust") or {}).get("value")
-            if gust_mps is not None:
-                out["wind_gust_mph"] = int(round(mps_to_mph(float(gust_mps))))
+            wg = obs_props.get("windGust") or {}
+            wg_mph = to_mph(wg.get("value"), wg.get("unitCode"))
+            if wg_mph is not None:
+                out["wind_gust_mph"] = int(round(wg_mph))
 
             # Wind direction (degrees)
             wind_dir = (obs_props.get("windDirection") or {}).get("value")
@@ -246,7 +273,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
                 out["wind_direction_deg"] = int(round(float(wind_dir)))
                 out["wind_direction_cardinal"] = deg_to_cardinal(float(wind_dir))
 
-            # Precipitation last hour (mm -> inches) (often null)
+            # Precipitation last hour (mm -> inches) (often null / absent)
             p1 = (obs_props.get("precipitationLastHour") or {}).get("value")
             if p1 is not None:
                 out["precip_last_hour_in"] = round(mm_to_in(float(p1)), 2)
