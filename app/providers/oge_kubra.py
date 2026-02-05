@@ -5,6 +5,7 @@ Adds drill-down granularity by expanding cluster tiles to higher zooms, capped a
 """
 
 import math
+import time
 import requests
 import mercantile
 import polyline
@@ -158,7 +159,8 @@ class OgeKubraClient:
                             outages_by_id[o["id"]] = o
 
         if not outages_by_id:
-            raise RuntimeError("Tiles fetched successfully, but no non-cluster outage records were produced.")
+            # Common during “no outages” or transition states; return clean empty.
+            return {"nearest": None, "outages": []}
 
         # 5) Attach distance and sort
         enriched = []
@@ -210,7 +212,7 @@ class OgeKubraClient:
             print(f"FETCH z={zoom} q={quadkey} -> {url}")
 
         try:
-            r = self.session.get(url, timeout=10)
+            r = self.session.get(url, timeout=5)
         except requests.RequestException:
             return []
 
@@ -274,7 +276,7 @@ class OgeKubraClient:
                             print("  ", url)
 
                         try:
-                            r = self.session.get(url, timeout=10)
+                            r = self.session.get(url, timeout=5)
                         except requests.RequestException:
                             continue
 
@@ -371,7 +373,7 @@ class OgeKubraClient:
             f"{BASE_URL}stormcenter/api/v1/stormcenters/"
             f"{INSTANCE_ID}/views/{VIEW_ID}/currentState?preview=false"
         )
-        r = self.session.get(url, timeout=10)
+        r = self.session.get(url, timeout=5)
         r.raise_for_status()
         return r.json()
 
@@ -380,7 +382,7 @@ class OgeKubraClient:
             f"{BASE_URL}stormcenter/api/v1/stormcenters/"
             f"{INSTANCE_ID}/views/{VIEW_ID}/configuration/{self.deployment_id}?preview=false"
         )
-        r = self.session.get(url, timeout=10)
+        r = self.session.get(url, timeout=5)
         r.raise_for_status()
         return r.json()
 
@@ -405,6 +407,24 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+# -------------------------- CLIENT CACHE --------------------------
+
+_CLIENT: Optional["OgeKubraClient"] = None
+_CLIENT_TS: float = 0.0
+_CLIENT_TTL_S: int = 60  # refresh discovery once per minute
+
+
+def _get_client(debug: bool = False) -> "OgeKubraClient":
+    global _CLIENT, _CLIENT_TS
+    now = time.time()
+    if _CLIENT is None or (now - _CLIENT_TS) > _CLIENT_TTL_S:
+        _CLIENT = OgeKubraClient(debug=debug)
+        _CLIENT_TS = now
+    else:
+        if debug:
+            _CLIENT.debug = True
+    return _CLIENT
+
 # -------------------------- PUBLIC WRAPPER --------------------------
 
 def fetch_oge_outages(
@@ -416,7 +436,7 @@ def fetch_oge_outages(
     drill_neighbor_depth: int = DEFAULT_DRILL_NEIGHBOR_DEPTH,
     debug: bool = False,
 ) -> Dict[str, Any]:
-    client = OgeKubraClient(debug=debug)
+    client = _get_client(debug=debug)
     return client.fetch_outages_for_point(
         lat,
         lon,
