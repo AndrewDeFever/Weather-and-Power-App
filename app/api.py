@@ -1,432 +1,509 @@
-"""
-PSO KUBRA Storm Center outage integration
+from __future__ import annotations
 
-Matches OG&E provider contract:
-  fetch_pso_outages(lat, lon, max_radius_km=50.0, max_zoom=12,
-                    neighbor_depth=1, drill_neighbor_depth=1, debug=False)
-
-Returns:
-  { "nearest": <outage|null>, "outages": [<outage>...] }
-
-Outage fields (consistent with OG&E):
-  id
-  cluster (bool)
-  customers_out
-  n_out
-  etr
-  etr_confidence
-  cause
-  comments
-  crew_status
-  start_time
-  latitude
-  longitude
-  distance_km (added before return)
-
-NOTE:
-- This module normalizes etr/start_time into America/Chicago ISO strings
-  (with offset) to support UI display labeled as CT.
-"""
-
-import math
-import re
-import time
-import threading
-from datetime import datetime
-from zoneinfo import ZoneInfo
-from typing import List, Dict, Any, Optional, Tuple, Set
+import difflib
+import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
 import requests
-import mercantile
-import polyline
+from fastapi import FastAPI, Query
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-# -------------------------- DISCOVERY CACHE --------------------------
-# PSO requires a relatively expensive discovery + tile-scheme probe (multiple HTTP calls).
-# Cache those derived parameters for a short TTL to keep API latency predictable.
-_CACHE_TTL_S = 300  # 5 minutes
-_cache_lock = threading.Lock()
-_cached_profile: Optional[Dict[str, Any]] = None  # {"ts": float, ...fields...}
+from app.power_router import get_power_status, probe_power_status
+
+app = FastAPI(title="Weather & Power Status", version="0.8.1")
 
 
-def _get_cached_profile() -> Optional[Dict[str, Any]]:
-    global _cached_profile
-    with _cache_lock:
-        if not _cached_profile:
+# ----------------------------
+# Helpers
+# ----------------------------
+def to_float(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if s == "":
             return None
-        age = time.time() - float(_cached_profile.get("ts", 0.0))
-        if age > _CACHE_TTL_S:
-            _cached_profile = None
+        try:
+            return float(s)
+        except ValueError:
             return None
-        return dict(_cached_profile)
+    return None
 
 
-def _set_cached_profile(profile: Dict[str, Any]) -> None:
-    global _cached_profile
-    with _cache_lock:
-        _cached_profile = dict(profile)
+def parse_latlon(q: str) -> Optional[Tuple[float, float]]:
+    if not q or "," not in q:
+        return None
+    a, b = q.split(",", 1)
+    lat = to_float(a)
+    lon = to_float(b)
+    if lat is None or lon is None:
+        return None
+    return (lat, lon)
 
 
-CT = ZoneInfo("America/Chicago")
+def provider_info(utility: Optional[str]) -> Dict[str, Any]:
+    u = (utility or "").strip().upper() or None
+    if u == "OGE":
+        return {
+            "utility": "OGE",
+            "name": "OG&E",
+            "outage_map": "https://oge.com/wps/portal/oge/outages/systemwatch/",
+            "platform": "KUBRA",
+        }
+    if u == "PSO":
+        return {"utility": "PSO", "name": "PSO", "outage_map": "https://outagemap.psoklahoma.com/", "platform": "KUBRA"}
+    if u == "EVERGY":
+        return {"utility": "EVERGY", "name": "Evergy", "outage_map": "https://outagemap.evergy.com/", "platform": "KUBRA"}
+    if u == "ONCOR":
+        return {"utility": "ONCOR", "name": "Oncor", "outage_map": "https://stormcenter.oncor.com/", "platform": "KUBRA"}
+    if u in {"AUSTIN", "AUSTINENERGY", "AUSTIN_ENERGY", "AE"}:
+        return {
+            "utility": "AUSTIN",
+            "name": "Austin Energy",
+            "outage_map": "https://outagemap.austinenergy.com/",
+            "platform": "KUBRA",
+        }
+    if u:
+        return {"utility": u, "name": u, "outage_map": None, "platform": ""}
+    return {"utility": None, "name": "Unknown", "outage_map": None, "platform": ""}
 
 
-def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    R = 6371.0
-    p1 = math.radians(lat1)
-    p2 = math.radians(lat2)
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlon / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
+def empty_weather(error: Optional[str] = None) -> Dict[str, Any]:
+    # Backward compatible keys + new NOC keys
+    w: Dict[str, Any] = {
+        "temperature_f": None,
+        "condition": None,
+        "wind_speed_mph": None,
+        "wind_gust_mph": None,
+        "wind_direction_deg": None,
+        "wind_direction_cardinal": None,
+        "precip_last_hour_in": None,
+        "wind_chill_f": None,
+        "heat_index_f": None,
+        "observation_time": None,
+        "station_id": None,
+        "temp_kind": None,        # observed | forecast_fallback | None
+        "temp_source": None,      # NWS_OBSERVATION | NWS_FORECAST | None
+        "temp_source_url": None,  # endpoint actually used
+        "detailedForecast": None, # full text, suitable for expandable UI
+        "has_weather_alert": False,
+        "max_alert_severity": "none",
+        "alerts": [],
+    }
+    if error:
+        w["error"] = error
+    return w
 
 
-def to_iso_ct(dt_str: Optional[str]) -> Optional[str]:
-    if not dt_str:
+def empty_power(utility: Optional[str], error: str, ok: bool = False) -> Dict[str, Any]:
+    return {
+        "utility": (utility or "").strip().upper() or None,
+        "has_outage_nearby": False,
+        "nearest": None,
+        "outages": [],
+        "meta": {"source": "app.api", "ok": ok, "error": error},
+    }
+
+
+def c_to_f(c: float) -> float:
+    return (c * 9.0 / 5.0) + 32.0
+
+
+def mps_to_mph(mps: float) -> float:
+    return mps * 2.2369362920544
+
+
+def kmh_to_mph(kmh: float) -> float:
+    return kmh * 0.621371192237334
+
+
+def mm_to_in(mm: float) -> float:
+    return mm / 25.4
+
+
+def deg_to_cardinal(deg: Optional[float]) -> Optional[str]:
+    if deg is None:
         return None
     try:
-        # Many Kubra endpoints return ISO-ish strings. Best-effort parse.
-        # Example: "2024-01-01T12:34:56Z" or "...-06:00"
-        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        return dt.astimezone(CT).isoformat()
+        d = float(deg) % 360.0
     except Exception:
-        return dt_str
+        return None
+    dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    idx = int((d + 11.25) // 22.5) % 16
+    return dirs[idx]
 
 
-class PSOKubraClient:
+def to_mph(value: Any, unit_code: Any) -> Optional[float]:
     """
-    Client that discovers:
-    - stormcenter_id + view_id from landing HTML/JS
-    - currentState -> deploymentId, clusterTemplate
-    - config -> cluster layer options
-    - tile scheme (layer name, zoom, qkh strategy, layout)
+    Convert an NWS observation numeric 'value' to mph using the provided unitCode.
+
+    Known seen in the wild:
+      - wmoUnit:m_s-1
+      - wmoUnit:km_h-1
+
+    If the unit is unknown, return None rather than emitting a wrong mph value.
     """
-
-    BASE = "https://pso.uat.kubra.io"  # note: may redirect in real env; discovery handles it
-    LANDING = "https://outagemap.psoklahoma.com"  # PSO outage map entry point
-
-    def __init__(self, debug: bool = False):
-        self.debug = debug
-        self.s = requests.Session()
-        self.s.headers.update(
-            {
-                "User-Agent": "NOCTriage/1.0 (weather-power-status)",
-                "Accept": "*/*",
-            }
-        )
-
-        # Discovered
-        self.stormcenter_id: Optional[str] = None
-        self.view_id: Optional[str] = None
-        self.cluster_template: Optional[str] = None
-        self.deployment_id: Optional[str] = None
-        self.cluster_layers: List[str] = []
-
-        # Tile scheme
-        self.entry_zoom: Optional[int] = None
-        self.layer_name: Optional[str] = None
-        self.qkh_strategy: Optional[str] = None
-        self.layout_name: Optional[str] = None
-
-    def log(self, *args: Any) -> None:
-        if self.debug:
-            print("[PSO]", *args)
-
-    def discover(self) -> None:
-        """
-        Scrape stormcenter_id & view_id, then resolve currentState to obtain deploymentId + clusterTemplate,
-        then fetch configuration to list possible cluster layers.
-        """
-        self.log("Discover: landing", self.LANDING)
-        r = self.s.get(self.LANDING, timeout=10)
-        r.raise_for_status()
-        html = r.text
-
-        # Find IDs in JS/config snippets
-        m_sc = re.search(r"stormcenterId\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", html)
-        m_view = re.search(r"viewId\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"", html)
-
-        if not m_sc or not m_view:
-            # Try alternate patterns
-            m_sc = re.search(r"stormcenterId\\s*[:=]\\s*\\\"([^\\\"]+)\\\"", html)
-            m_view = re.search(r"viewId\\s*[:=]\\s*\\\"([^\\\"]+)\\\"", html)
-
-        if not m_sc or not m_view:
-            raise RuntimeError("Unable to discover stormcenterId/viewId from landing page")
-
-        self.stormcenter_id = m_sc.group(1)
-        self.view_id = m_view.group(1)
-        self.log("stormcenter_id", self.stormcenter_id, "view_id", self.view_id)
-
-        # currentState endpoint (common Kubra pattern)
-        state_url = f"https://stormcenter.pso.uat.kubra.io/stormcenter/{self.stormcenter_id}/views/{self.view_id}/currentState"
-        self.log("Discover: currentState", state_url)
-        sr = self.s.get(state_url, timeout=10)
-        sr.raise_for_status()
-        state = sr.json()
-
-        self.deployment_id = state.get("deploymentId") or state.get("deploymentID")
-        self.cluster_template = state.get("clusterTemplate") or state.get("cluster_template")
-        self.log("deployment_id", self.deployment_id, "cluster_template", self.cluster_template)
-
-        # Config endpoint to list layers
-        cfg_url = f"https://stormcenter.pso.uat.kubra.io/stormcenter/{self.stormcenter_id}/views/{self.view_id}/configuration"
-        self.log("Discover: configuration", cfg_url)
-        cr = self.s.get(cfg_url, timeout=10)
-        cr.raise_for_status()
-        cfg = cr.json()
-
-        # Best-effort layer list extraction
-        layers = []
-        try:
-            layers = cfg.get("layers") or []
-        except Exception:
-            layers = []
-
-        self.cluster_layers = []
-        for lyr in layers:
-            name = lyr.get("name") if isinstance(lyr, dict) else None
-            if name and "cluster" in name.lower():
-                self.cluster_layers.append(name)
-
-        self.log("cluster_layers", self.cluster_layers)
-
-    def probe_tile_scheme(self) -> Tuple[str, str, str, str, int]:
-        """
-        Determine which layer/zoom/qkh strategy/layout responds for this provider.
-
-        Returns:
-          (base_url, layer_name, qkh_strategy, layout_name, entry_zoom)
-        """
-        if not self.stormcenter_id or not self.view_id:
-            raise RuntimeError("discover() must be called first")
-
-        # Base map tile endpoint tends to be under stormcenter.* domain.
-        base_url = f"https://stormcenter.pso.uat.kubra.io/stormcenter/{self.stormcenter_id}/views/{self.view_id}/tiles"
-
-        # Candidate strategies / layouts - can evolve by provider.
-        qkh_strategies = ["qkh", "quadkeyhash", "quadkey"]
-        layouts = ["public", "default", "layout"]
-        layer_candidates = self.cluster_layers or ["cluster", "clusters"]
-
-        # Start at a reasonable zoom and test downward if needed.
-        zoom_candidates = list(range(12, 6, -1))
-
-        lat_test, lon_test = 36.15398, -95.99277  # Tulsa-ish as probe point
-        t = mercantile.tile(lon_test, lat_test, 10)
-
-        for z in zoom_candidates:
-            t = mercantile.tile(lon_test, lat_test, z)
-            for layer_name in layer_candidates:
-                for strat in qkh_strategies:
-                    for layout in layouts:
-                        url = f"{base_url}/{layout}/{layer_name}/{z}/{t.x}/{t.y}.json"
-                        try:
-                            rr = self.s.get(url, timeout=5)
-                            if rr.status_code == 200 and rr.headers.get("content-type", "").startswith("application/json"):
-                                self.entry_zoom = z
-                                self.layer_name = layer_name
-                                self.qkh_strategy = strat
-                                self.layout_name = layout
-                                self.log("Tile scheme OK:", url)
-                                return (base_url, layer_name, strat, layout, z)
-                        except Exception:
-                            continue
-
-        raise RuntimeError("Unable to probe PSO tile scheme")
-
-    def _tile_url(self, z: int, x: int, y: int) -> str:
-        if not self.stormcenter_id or not self.view_id:
-            raise RuntimeError("discover() must be called first")
-        if self.layout_name is None or self.layer_name is None:
-            raise RuntimeError("probe_tile_scheme() must be called first")
-
-        base_url = f"https://stormcenter.pso.uat.kubra.io/stormcenter/{self.stormcenter_id}/views/{self.view_id}/tiles"
-        return f"{base_url}/{self.layout_name}/{self.layer_name}/{z}/{x}/{y}.json"
-
-    def _fetch_tile(self, z: int, x: int, y: int) -> List[Dict[str, Any]]:
-        url = self._tile_url(z, x, y)
-        rr = self.s.get(url, timeout=8)
-        if rr.status_code != 200:
-            return []
-        try:
-            data = rr.json()
-        except Exception:
-            return []
-
-        # Kubra tile payloads vary. We normalize to a list of "outage-ish" dicts.
-        if isinstance(data, dict) and "features" in data:
-            feats = data.get("features") or []
-            out = []
-            for f in feats:
-                props = f.get("properties") or {}
-                geom = f.get("geometry") or {}
-                coords = (geom.get("coordinates") or [None, None])
-                if isinstance(coords, list) and len(coords) >= 2:
-                    lon, lat = coords[0], coords[1]
-                else:
-                    lon, lat = None, None
-                props["longitude"] = props.get("longitude", lon)
-                props["latitude"] = props.get("latitude", lat)
-                out.append(props)
-            return out
-
-        if isinstance(data, list):
-            return data
-
-        if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
-            return data["data"]
-
-        return []
-
-    def fetch_outages_near(
-        self,
-        lat: float,
-        lon: float,
-        max_radius_km: float = 50.0,
-        max_zoom: int = 12,
-        neighbor_depth: int = 1,
-        drill_neighbor_depth: int = 1,
-    ) -> Dict[str, Any]:
-        """
-        Fetch tiles around the point and return outages plus nearest outage.
-
-        neighbor_depth: number of tiles around main tile to fetch (square neighborhood).
-        drill_neighbor_depth: optional second-level neighborhood around any found clusters (future enhancement).
-        """
-        if self.entry_zoom is None:
-            raise RuntimeError("probe_tile_scheme() must be called first")
-
-        z = min(max_zoom, int(self.entry_zoom))
-
-        t = mercantile.tile(lon, lat, z)
-
-        tiles: Set[Tuple[int, int, int]] = set()
-        for dx in range(-neighbor_depth, neighbor_depth + 1):
-            for dy in range(-neighbor_depth, neighbor_depth + 1):
-                tiles.add((z, t.x + dx, t.y + dy))
-
-        outages: List[Dict[str, Any]] = []
-        for (tz, tx, ty) in tiles:
-            outages.extend(self._fetch_tile(tz, tx, ty))
-
-        # Normalize + compute nearest
-        nearest = None
-        best_d = None
-
-        normalized: List[Dict[str, Any]] = []
-        for o in outages:
-            try:
-                olat = float(o.get("latitude"))
-                olon = float(o.get("longitude"))
-            except Exception:
-                continue
-
-            d = haversine_km(lat, lon, olat, olon)
-            if d > max_radius_km:
-                continue
-
-            norm = {
-                "id": o.get("id") or o.get("ID") or o.get("outageId") or o.get("outage_id"),
-                "cluster": bool(o.get("cluster") or o.get("isCluster") or False),
-                "customers_out": o.get("customersOut") or o.get("customers_out") or o.get("custOut"),
-                "n_out": o.get("nOut") or o.get("n_out"),
-                "etr": to_iso_ct(o.get("etr") or o.get("estimatedRestoration")),
-                "etr_confidence": o.get("etrConfidence") or o.get("etr_confidence"),
-                "cause": o.get("cause"),
-                "comments": o.get("comments"),
-                "crew_status": o.get("crewStatus") or o.get("crew_status"),
-                "start_time": to_iso_ct(o.get("startTime") or o.get("start_time")),
-                "latitude": olat,
-                "longitude": olon,
-                "distance_km": d,
-            }
-            normalized.append(norm)
-
-            if best_d is None or d < best_d:
-                best_d = d
-                nearest = norm
-
-        normalized.sort(key=lambda x: x.get("distance_km") or 1e9)
-
-        return {"nearest": nearest, "outages": normalized}
+    v = to_float(value)
+    if v is None:
+        return None
+    uc = (unit_code or "").strip()
+    if "m_s-1" in uc:
+        return mps_to_mph(v)
+    if "km_h-1" in uc:
+        return kmh_to_mph(v)
+    return None
 
 
-def fetch_pso_outages(
-    lat: float,
-    lon: float,
-    max_radius_km: float = 50.0,
-    max_zoom: int = 12,
-    neighbor_depth: int = 1,
-    drill_neighbor_depth: int = 1,
-    debug: bool = False,
-) -> Dict[str, Any]:
-    """
-    Primary provider function (contract-compatible with OG&E).
+# ----------------------------
+# Site registry
+# ----------------------------
+def load_sites() -> Dict[str, Dict[str, Any]]:
+    p = Path(__file__).parent / "data" / "sites.json"
+    raw = p.read_text(encoding="utf-8-sig")
+    data = json.loads(raw)
 
-    Optimization:
-    - Cache the discovery + tile-scheme probe outputs for a short TTL so most requests only do tile fetches.
-    - If debug=True, cache is bypassed to make troubleshooting deterministic.
-    """
-    client = PSOKubraClient(debug=debug)
-
-    prof = _get_cached_profile() if not debug else None
-    if prof:
-        # Inject cached discovery/probe results
-        client.stormcenter_id = prof.get("stormcenter_id")
-        client.view_id = prof.get("view_id")
-        client.cluster_template = prof.get("cluster_template")
-        client.deployment_id = prof.get("deployment_id")
-        client.cluster_layers = prof.get("cluster_layers") or []
-        client.entry_zoom = prof.get("entry_zoom")
-        client.layer_name = prof.get("layer_name")
-        client.qkh_strategy = prof.get("qkh_strategy")
-        client.layout_name = prof.get("layout_name")
+    if isinstance(data, dict) and "sites" in data and isinstance(data["sites"], list):
+        sites_list = data["sites"]
+    elif isinstance(data, list):
+        sites_list = data
+    elif isinstance(data, dict):
+        sites_list = list(data.values())
     else:
-        client.discover()
-        _base_url, layer_name, qkh_strategy, layout_name, entry_zoom = client.probe_tile_scheme()
+        sites_list = []
 
-        _set_cached_profile(
-            {
-                "ts": time.time(),
-                "stormcenter_id": client.stormcenter_id,
-                "view_id": client.view_id,
-                "cluster_template": client.cluster_template,
-                "deployment_id": client.deployment_id,
-                "cluster_layers": list(client.cluster_layers),
-                "entry_zoom": entry_zoom,
-                "layer_name": layer_name,
-                "qkh_strategy": qkh_strategy,
-                "layout_name": layout_name,
-            }
-        )
+    out: Dict[str, Dict[str, Any]] = {}
+    for s in sites_list:
+        if not isinstance(s, dict):
+            continue
+        sid = (s.get("site_id") or s.get("id") or "").strip()
+        if not sid:
+            continue
 
-    return client.fetch_outages_near(
-        lat=lat,
-        lon=lon,
-        max_radius_km=max_radius_km,
-        max_zoom=max_zoom,
-        neighbor_depth=neighbor_depth,
-        drill_neighbor_depth=drill_neighbor_depth,
-    )
+        out[sid.upper()] = {
+            "site_id": sid.upper(),
+            "name": s.get("name") or sid.upper(),
+            "lat": to_float(s.get("lat")),
+            "lon": to_float(s.get("lon")),
+            "utility": (s.get("utility") or "").strip().upper() or None,
+            "sev": s.get("sev") or s.get("severity"),
+            # --- Added: address fields passthrough from sites.json
+            "address": s.get("address"),
+            "city": s.get("city"),
+            "state": s.get("state"),
+            "zip": s.get("zip"),
+            "enabled": s.get("enabled", True),
+            "tz": s.get("tz"),
+        }
+    return out
 
 
-# -------------------------- SELF TEST --------------------------
+SITES: Dict[str, Dict[str, Any]] = load_sites()
 
-if __name__ == "__main__":
-    test_lat, test_lon = 36.15398, -95.99277
-    print("Testing PSO outage fetch (debug on, max_zoom=12)...")
 
+# ----------------------------
+# Weather (NWS)
+# ----------------------------
+def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
+    headers = {"User-Agent": "NOCTriage/1.0 (weather-power-status)"}
+    points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}"
+
+    # Defaults (backward compatible)
+    out = empty_weather()
+
+    # Use a session for connection reuse (faster + fewer sockets)
+    s = requests.Session()
+    s.headers.update(headers)
+
+    # --- points (used only to discover station + forecast URL) ---
     try:
-        res = fetch_pso_outages(test_lat, test_lon, debug=True)
-        print("\nRESULT SUMMARY")
-        print("Outages returned:", len(res["outages"]))
-        if res["nearest"]:
-            n = res["nearest"]
-            print("Nearest id:", n.get("id"))
-            print("Nearest customers_out:", n.get("customers_out"))
-            print("Nearest crew_status:", n.get("crew_status"))
-            print("Nearest distance_km:", n.get("distance_km"))
-        else:
-            print("No nearest outage found within radius.")
+        r = s.get(points_url, timeout=5)
+        r.raise_for_status()
+        points_data = r.json()
     except Exception as e:
-        print("ERROR:", repr(e))
+        return empty_weather(error=f"NWS points fetch failed: {type(e).__name__}: {e}")
+
+    props = points_data.get("properties") or {}
+    stations_url = props.get("observationStations")
+    forecast_url = props.get("forecast")  # used for detailedForecast + temp fallback
+
+    # --- observed (preferred for all A-fields) ---
+    station_id: Optional[str] = None
+    obs_url: Optional[str] = None
+    try:
+        if stations_url:
+            sr = s.get(stations_url, timeout=5)
+            sr.raise_for_status()
+            feats = sr.json().get("features") or []
+            if feats:
+                station_id = (feats[0].get("properties") or {}).get("stationIdentifier")
+
+        if station_id:
+            obs_url = f"https://api.weather.gov/stations/{station_id}/observations/latest"
+            orq = s.get(obs_url, timeout=5)
+            orq.raise_for_status()
+            obs_props = orq.json().get("properties") or {}
+
+            # Temperature (C -> F)
+            temp_c = (obs_props.get("temperature") or {}).get("value")
+            if temp_c is not None:
+                out["temperature_f"] = int(round(c_to_f(float(temp_c))))
+                out["temp_kind"] = "observed"
+                out["temp_source"] = "NWS_OBSERVATION"
+                out["temp_source_url"] = obs_url
+
+            # Condition text
+            out["condition"] = obs_props.get("textDescription") or out["condition"]
+
+            # Wind speed / gust (UNIT-AWARE -> mph)
+            ws = obs_props.get("windSpeed") or {}
+            ws_mph = to_mph(ws.get("value"), ws.get("unitCode"))
+            if ws_mph is not None:
+                out["wind_speed_mph"] = int(round(ws_mph))
+
+            wg = obs_props.get("windGust") or {}
+            wg_mph = to_mph(wg.get("value"), wg.get("unitCode"))
+            if wg_mph is not None:
+                out["wind_gust_mph"] = int(round(wg_mph))
+
+            # Wind direction (degrees)
+            wind_dir = (obs_props.get("windDirection") or {}).get("value")
+            if wind_dir is not None:
+                out["wind_direction_deg"] = int(round(float(wind_dir)))
+                out["wind_direction_cardinal"] = deg_to_cardinal(float(wind_dir))
+
+            # Precipitation last hour (mm -> inches) (often null / absent)
+            p1 = (obs_props.get("precipitationLastHour") or {}).get("value")
+            if p1 is not None:
+                out["precip_last_hour_in"] = round(mm_to_in(float(p1)), 2)
+
+            # Wind chill / heat index (C -> F) (may be null)
+            wc_c = (obs_props.get("windChill") or {}).get("value")
+            if wc_c is not None:
+                out["wind_chill_f"] = int(round(c_to_f(float(wc_c))))
+
+            hi_c = (obs_props.get("heatIndex") or {}).get("value")
+            if hi_c is not None:
+                out["heat_index_f"] = int(round(c_to_f(float(hi_c))))
+
+            # Provenance
+            out["observation_time"] = obs_props.get("timestamp")
+            out["station_id"] = station_id
+    except Exception:
+        # If observations fail, we do NOT try to "fill in" A-fields from forecast.
+        # Only temperature may fallback (explicitly labeled) to avoid an empty card.
+        pass
+
+    # --- forecast: fetch ONCE (used for temp fallback + detailedForecast) ---
+    p0 = None
+    if forecast_url:
+        try:
+            fc = s.get(forecast_url, timeout=5)
+            fc.raise_for_status()
+            periods = (fc.json().get("properties") or {}).get("periods") or []
+            if periods:
+                p0 = periods[0]
+        except Exception:
+            p0 = None
+
+    # --- temperature fallback ONLY (clearly labeled) ---
+    if out.get("temperature_f") is None and p0:
+        out["temperature_f"] = p0.get("temperature")
+        # if we have no condition from obs, fallback for condition too
+        if out.get("condition") is None:
+            out["condition"] = p0.get("shortForecast")
+        out["temp_kind"] = "forecast_fallback"
+        out["temp_source"] = "NWS_FORECAST"
+        out["temp_source_url"] = forecast_url
+
+    # --- detailedForecast text (requested) ---
+    if out.get("detailedForecast") is None and p0:
+        out["detailedForecast"] = p0.get("detailedForecast")
+
+    # --- alerts (C) ---
+    alerts = []
+    has_weather_alert = False
+    max_alert_severity = "none"
+    try:
+        alerts_url = f"https://api.weather.gov/alerts/active?point={lat:.4f},{lon:.4f}"
+        ar = s.get(alerts_url, timeout=5)
+        ar.raise_for_status()
+        feats = ar.json().get("features") or []
+        for f in feats:
+            p = f.get("properties") or {}
+            alerts.append(
+                {
+                    "event": p.get("event"),
+                    "severity": p.get("severity"),
+                    "certainty": p.get("certainty"),
+                    "urgency": p.get("urgency"),
+                    "headline": p.get("headline"),
+                    "sent": p.get("sent"),
+                    "onset": p.get("onset"),
+                    "effective": p.get("effective"),
+                    "ends": p.get("ends"),
+                    "expires": p.get("expires"),
+                    "description": p.get("description"),
+                    "instruction": p.get("instruction"),
+                }
+            )
+        if alerts:
+            has_weather_alert = True
+            # Keep your simple approach (first alert). You can improve later by ranking severities.
+            max_alert_severity = (alerts[0].get("severity") or "unknown").lower()
+    except Exception:
+        pass
+
+    out["alerts"] = alerts
+    out["has_weather_alert"] = has_weather_alert
+    out["max_alert_severity"] = max_alert_severity
+
+    return out
+
+
+# ----------------------------
+# Frontend (Option A)
+# ----------------------------
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+INDEX_PATH = STATIC_DIR / "index.html"
+
+# Serve /static/* (styles.css, app.js, images, etc.)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+def index():
+    return FileResponse(INDEX_PATH)
+
+
+# ----------------------------
+# API
+# ----------------------------
+@app.get("/api/status")
+def api_status(
+    # Backward/forward compatible: accept either ?query= (existing) or ?q= (frontend convention)
+    query: Optional[str] = Query(None, description="Site ID or lat,lon"),
+    q: Optional[str] = Query(None, description="Alias for 'query' (Site ID or lat,lon)"),
+) -> Dict[str, Any]:
+    raw_in = (query if query is not None else q)
+    q_str = (raw_in or "").strip()
+
+    if not q_str:
+        return {
+            "query": raw_in,
+            "resolved": {"type": "unknown", "name": "", "site_id": None},
+            "provider": provider_info(None),
+            "weather": empty_weather(error="Missing query parameter. Provide ?query= or ?q="),
+            "power": empty_power(None, "Missing query parameter. Provide ?query= or ?q=", ok=False),
+            "probe": None,
+        }
+
+    latlon = parse_latlon(q_str)
+
+    resolved: Dict[str, Any]
+    site_utility: Optional[str] = None
+
+    if latlon:
+        lat, lon = latlon
+        resolved = {"type": "latlon", "name": f"{lat:.7f}, {lon:.7f}", "site_id": None, "lat": lat, "lon": lon, "utility": None}
+    else:
+        sid = q_str.upper()
+        site = SITES.get(sid)
+        if not site:
+            close = difflib.get_close_matches(sid, list(SITES.keys()), n=3, cutoff=0.6)
+            if close:
+                sid = close[0]
+                site = SITES.get(sid)
+
+        if not site:
+            return {
+                "query": raw_in,
+                "resolved": {"type": "unknown", "name": q_str, "site_id": None},
+                "provider": provider_info(None),
+                "weather": empty_weather(error="Site not found"),
+                "power": empty_power(None, "Site not found", ok=False),
+                "probe": None,
+            }
+
+        site_utility = site.get("utility")
+        # --- Added: include address fields in resolved payload for site lookups
+        resolved = {
+            "type": "site",
+            "name": site.get("name") or sid,
+            "site_id": sid,
+            "address": site.get("address"),
+            "city": site.get("city"),
+            "state": site.get("state"),
+            "zip": site.get("zip"),
+            "lat": site.get("lat"),
+            "lon": site.get("lon"),
+            "utility": site_utility,
+        }
+
+    lat = to_float(resolved.get("lat"))
+    lon = to_float(resolved.get("lon"))
+    if lat is None or lon is None:
+        return {
+            "query": raw_in,
+            "resolved": resolved,
+            "provider": provider_info(site_utility),
+            "weather": empty_weather(error="Missing latitude/longitude; weather lookup unavailable."),
+            "power": empty_power(site_utility, "Missing latitude/longitude; power lookup unavailable.", ok=False),
+            "probe": None,
+        }
+
+    probe_payload = None
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_weather = ex.submit(fetch_weather, lat, lon)
+
+        if site_utility:
+            f_power = ex.submit(get_power_status, lat, lon, site_utility)
+        else:
+
+            def do_probe():
+                chosen, attempts = probe_power_status(lat, lon)
+                return chosen, attempts
+
+            f_power = ex.submit(do_probe)
+
+        # ---- HARD CAP WEATHER WAIT (prevents NWS from stalling /api/status) ----
+        try:
+            weather = f_weather.result(timeout=8)
+        except FuturesTimeout:
+            weather = empty_weather(error="Weather lookup timed out")
+        except Exception as e:
+            weather = empty_weather(error=f"Weather lookup failed: {type(e).__name__}: {e}")
+
+        if site_utility:
+            power_obj = f_power.result()
+        else:
+            power_obj, attempts = f_power.result()
+            probe_payload = {
+                "mode": "probe",
+                "winner": getattr(power_obj, "utility", None) if getattr(power_obj, "has_outage_nearby", False) else None,
+                "attempts": [
+                    {
+                        "provider": a.utility,
+                        "ok": a.meta.ok,
+                        "error": a.meta.error,
+                        "has_outage_nearby": a.has_outage_nearby,
+                        "nearest_distance_miles": (a.nearest.distance_miles if a.nearest else None),
+                        "nearest_customers_out": (a.nearest.customers_out if a.nearest else None),
+                    }
+                    for a in attempts
+                ],
+            }
+
+    provider_banner = provider_info(site_utility)
+
+    # Normalize power object to dict
+    power_payload = power_obj.model_dump() if hasattr(power_obj, "model_dump") else power_obj
+
+    return {"query": raw_in, "resolved": resolved, "provider": provider_banner, "weather": weather, "power": power_payload, "probe": probe_payload}
