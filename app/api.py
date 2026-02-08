@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import difflib
 import json
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -216,13 +216,9 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     # Defaults (backward compatible)
     out = empty_weather()
 
-    # Use a session for connection reuse (faster + fewer sockets)
-    s = requests.Session()
-    s.headers.update(headers)
-
     # --- points (used only to discover station + forecast URL) ---
     try:
-        r = s.get(points_url, timeout=5)
+        r = requests.get(points_url, headers=headers, timeout=5)
         r.raise_for_status()
         points_data = r.json()
     except Exception as e:
@@ -230,14 +226,14 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
 
     props = points_data.get("properties") or {}
     stations_url = props.get("observationStations")
-    forecast_url = props.get("forecast")  # used for detailedForecast + temp fallback
+    forecast_url = props.get("forecast")  # used ONLY for detailedForecast text
 
     # --- observed (preferred for all A-fields) ---
     station_id: Optional[str] = None
     obs_url: Optional[str] = None
     try:
         if stations_url:
-            sr = s.get(stations_url, timeout=5)
+            sr = requests.get(stations_url, headers=headers, timeout=5)
             sr.raise_for_status()
             feats = sr.json().get("features") or []
             if feats:
@@ -245,7 +241,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
 
         if station_id:
             obs_url = f"https://api.weather.gov/stations/{station_id}/observations/latest"
-            orq = s.get(obs_url, timeout=5)
+            orq = requests.get(obs_url, headers=headers, timeout=5)
             orq.raise_for_status()
             obs_props = orq.json().get("properties") or {}
 
@@ -299,31 +295,37 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
         # Only temperature may fallback (explicitly labeled) to avoid an empty card.
         pass
 
-    # --- forecast: fetch ONCE (used for temp fallback + detailedForecast) ---
-    p0 = None
-    if forecast_url:
+    # --- temperature fallback ONLY (clearly labeled) ---
+    if out.get("temperature_f") is None and forecast_url:
         try:
-            fc = s.get(forecast_url, timeout=5)
+            fc = requests.get(forecast_url, headers=headers, timeout=5)
             fc.raise_for_status()
             periods = (fc.json().get("properties") or {}).get("periods") or []
             if periods:
                 p0 = periods[0]
+                out["temperature_f"] = p0.get("temperature")
+                # if we have no condition from obs, fallback for condition too
+                if out.get("condition") is None:
+                    out["condition"] = p0.get("shortForecast")
+                out["temp_kind"] = "forecast_fallback"
+                out["temp_source"] = "NWS_FORECAST"
+                out["temp_source_url"] = forecast_url
+                # Detailed forecast text requested
+                out["detailedForecast"] = p0.get("detailedForecast")
         except Exception:
-            p0 = None
-
-    # --- temperature fallback ONLY (clearly labeled) ---
-    if out.get("temperature_f") is None and p0:
-        out["temperature_f"] = p0.get("temperature")
-        # if we have no condition from obs, fallback for condition too
-        if out.get("condition") is None:
-            out["condition"] = p0.get("shortForecast")
-        out["temp_kind"] = "forecast_fallback"
-        out["temp_source"] = "NWS_FORECAST"
-        out["temp_source_url"] = forecast_url
+            pass
 
     # --- detailedForecast text (requested) ---
-    if out.get("detailedForecast") is None and p0:
-        out["detailedForecast"] = p0.get("detailedForecast")
+    # If we already set it from fallback, we keep it. Otherwise try to grab it.
+    if out.get("detailedForecast") is None and forecast_url:
+        try:
+            fc = requests.get(forecast_url, headers=headers, timeout=5)
+            fc.raise_for_status()
+            periods = (fc.json().get("properties") or {}).get("periods") or []
+            if periods:
+                out["detailedForecast"] = periods[0].get("detailedForecast")
+        except Exception:
+            pass
 
     # --- alerts (C) ---
     alerts = []
@@ -331,7 +333,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     max_alert_severity = "none"
     try:
         alerts_url = f"https://api.weather.gov/alerts/active?point={lat:.4f},{lon:.4f}"
-        ar = s.get(alerts_url, timeout=5)
+        ar = requests.get(alerts_url, headers=headers, timeout=5)
         ar.raise_for_status()
         feats = ar.json().get("features") or []
         for f in feats:
@@ -473,13 +475,7 @@ def api_status(
 
             f_power = ex.submit(do_probe)
 
-        # ---- HARD CAP WEATHER WAIT (prevents NWS from stalling /api/status) ----
-        try:
-            weather = f_weather.result(timeout=8)
-        except FuturesTimeout:
-            weather = empty_weather(error="Weather lookup timed out")
-        except Exception as e:
-            weather = empty_weather(error=f"Weather lookup failed: {type(e).__name__}: {e}")
+        weather = f_weather.result()
 
         if site_utility:
             power_obj = f_power.result()
