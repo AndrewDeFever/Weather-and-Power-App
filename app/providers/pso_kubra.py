@@ -14,22 +14,6 @@ Outage fields (consistent with OG&E):
   customers_out
   n_out
   etr
-  etr_confidence"""
-PSO KUBRA Storm Center outage integration
-
-Matches OG&E provider contract:
-  fetch_pso_outages(lat, lon, max_radius_km=50.0, max_zoom=12,
-                    neighbor_depth=1, drill_neighbor_depth=1, debug=False)
-
-Returns:
-  { "nearest": <outage|null>, "outages": [<outage>...] }
-
-Outage fields (consistent with OG&E):
-  id
-  cluster (bool)
-  customers_out
-  n_out
-  etr
   etr_confidence
   cause
   comments
