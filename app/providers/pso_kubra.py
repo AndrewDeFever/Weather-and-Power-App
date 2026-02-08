@@ -38,7 +38,11 @@ from typing import List, Dict, Any, Optional, Tuple, Set
 import requests
 import mercantile
 import polyline
+import threading
 
+_CACHE_TTL_S = 300  # 5 minutes
+_cache_lock = threading.Lock()
+_cached_profile: Optional[Dict[str, Any]] = None  # {ts: float, ...fields...}
 
 # -------------------------- PSO HOSTS / ENTRYPOINTS --------------------------
 
@@ -649,6 +653,23 @@ class PSOKubraClient:
 
 # -------------------------- PUBLIC FUNCTION --------------------------
 
+def _get_cached_profile() -> Optional[Dict[str, Any]]:
+    global _cached_profile
+    with _cache_lock:
+        if not _cached_profile:
+            return None
+        age = time.time() - float(_cached_profile.get("ts", 0.0))
+        if age > _CACHE_TTL_S:
+            _cached_profile = None
+            return None
+        return dict(_cached_profile)
+
+def _set_cached_profile(profile: Dict[str, Any]) -> None:
+    global _cached_profile
+    with _cache_lock:
+        _cached_profile = dict(profile)
+
+
 def fetch_pso_outages(
     lat: float,
     lon: float,
@@ -660,10 +681,38 @@ def fetch_pso_outages(
 ) -> Dict[str, Any]:
     """
     Primary provider function (contract-compatible with OG&E).
+    Uses cached discovery/tile-scheme to avoid re-probing every request.
     """
     client = PSOKubraClient(debug=debug)
-    client.discover()
-    client.probe_tile_scheme()
+
+    prof = _get_cached_profile() if not debug else None  # debug forces fresh discovery
+    if prof:
+        client.stormcenter_id = prof.get("stormcenter_id")
+        client.view_id = prof.get("view_id")
+        client.cluster_template = prof.get("cluster_template")
+        client.deployment_id = prof.get("deployment_id")
+        client.cluster_layers = prof.get("cluster_layers") or []
+        client.entry_zoom = prof.get("entry_zoom")
+        client.layer_name = prof.get("layer_name")
+        client.qkh_strategy = prof.get("qkh_strategy")
+        client.layout_name = prof.get("layout_name")
+    else:
+        client.discover()
+        base, layer, strat, layout_name, z = client.probe_tile_scheme()
+
+        _set_cached_profile({
+            "ts": time.time(),
+            "stormcenter_id": client.stormcenter_id,
+            "view_id": client.view_id,
+            "cluster_template": client.cluster_template,
+            "deployment_id": client.deployment_id,
+            "cluster_layers": list(client.cluster_layers),
+            "entry_zoom": z,
+            "layer_name": layer,
+            "qkh_strategy": strat,
+            "layout_name": layout_name,
+        })
+
     return client.fetch_outages_near(
         lat=lat,
         lon=lon,
@@ -672,7 +721,6 @@ def fetch_pso_outages(
         neighbor_depth=neighbor_depth,
         drill_neighbor_depth=drill_neighbor_depth,
     )
-
 
 # -------------------------- SELF TEST --------------------------
 
