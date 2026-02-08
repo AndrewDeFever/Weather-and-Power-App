@@ -1,14 +1,14 @@
 """
 PSO KUBRA Storm Center outage integration
 
-Matches OG&E provider contract:
+Primary function:
   fetch_pso_outages(lat, lon, max_radius_km=50.0, max_zoom=12,
                     neighbor_depth=1, drill_neighbor_depth=1, debug=False)
 
 Returns:
   { "nearest": <outage|null>, "outages": [<outage>...] }
 
-Outage fields (consistent with OG&E):
+Outage object fields (consistent with OG&E):
   id
   cluster (bool)
   customers_out
@@ -21,17 +21,11 @@ Outage fields (consistent with OG&E):
   start_time
   latitude
   longitude
-  distance_km (added before return)
-
-NOTE:
-- This module normalizes etr/start_time into America/Chicago ISO strings
-  (with offset) to support UI display labeled as CT.
+  distance_km
 """
 
 import math
 import re
-import time
-import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional, Tuple, Set
@@ -39,14 +33,6 @@ from typing import List, Dict, Any, Optional, Tuple, Set
 import requests
 import mercantile
 import polyline
-
-
-# -------------------------- DISCOVERY/TILE-SCHEME CACHE --------------------------
-# PSO discovery + tile-scheme probing is relatively expensive (multiple HTTP calls).
-# Cache derived parameters for a short TTL so most requests only do tile fetches.
-_CACHE_TTL_S = 300  # 5 minutes
-_cache_lock = threading.Lock()
-_cached_profile: Optional[Dict[str, Any]] = None  # {ts: float, ...fields...}
 
 
 # -------------------------- PSO HOSTS / ENTRYPOINTS --------------------------
@@ -58,30 +44,26 @@ KUBRA_TILE_BASE = "https://kubra.io"
 CHI_TZ = ZoneInfo("America/Chicago")
 UTC_TZ = ZoneInfo("UTC")
 
-# Known-good IDs you captured (fallback only).
-# These are NOT "guesses" — they are taken from your DevTools capture.
+# Known-good IDs (fallback only — from your DevTools capture)
 FALLBACK_STORMCENTER_ID = "4bb3b3bc-e1c4-448b-b806-e4fc85c3b640"
 FALLBACK_VIEW_ID = "e2356e43-c76f-4772-bf85-31240a2cc504"
 
-# PSO-territory probe points (per requirement)
+# PSO-territory probe points
 PROBE_POINTS: List[Tuple[float, float]] = [
     (36.15398, -95.99277),  # Tulsa
     (36.05260, -95.79082),  # Broken Arrow
     (36.13981, -96.10889),  # Sand Springs
-    (35.42702, -99.39026),  # Elk City-ish (corrected west OK longitude)
+    (35.42702, -99.39026),  # Elk City-ish (west OK)
 ]
 
-# User-required zoom candidates; we include 10 as well because a proven tile quadkey is length 10.
 ZOOM_CANDIDATES = [10, 11, 12, 13, 14]
-
 QKH_STRATEGIES = ["last3_rev", "last3", "first3", "first3_rev", "last4_rev"]
 
 URL_LAYOUTS = [
-    ("flat", lambda base, layer, qk: f"{KUBRA_TILE_BASE}/{base}/public/{layer}/{qk}.json"),
+    ("flat",   lambda base, layer, qk: f"{KUBRA_TILE_BASE}/{base}/public/{layer}/{qk}.json"),
     ("split2", lambda base, layer, qk: f"{KUBRA_TILE_BASE}/{base}/public/{layer}/{qk[:2]}/{qk}.json"),
 ]
 
-# If config parsing fails, we probe these layer candidates without hardcoding a single one.
 FALLBACK_LAYER_CANDIDATES = [f"cluster-{i}" for i in range(1, 9)]
 
 
@@ -90,10 +72,8 @@ FALLBACK_LAYER_CANDIDATES = [f"cluster-{i}" for i in range(1, 9)]
 class PSOKubraError(Exception):
     pass
 
-
 class PSOKubraDiscoveryError(PSOKubraError):
     pass
-
 
 class PSOKubraFetchError(PSOKubraError):
     pass
@@ -105,24 +85,19 @@ def _dbg(debug: bool, *args) -> None:
     if debug:
         print(*args)
 
-
 def _session() -> requests.Session:
     s = requests.Session()
-    s.headers.update(
-        {
-            "User-Agent": "NOCTriage/1.0 (PSO Kubra integration)",
-            "Accept": "application/json, text/plain, */*",
-        }
-    )
+    s.headers.update({
+        "User-Agent": "NOCTriage/1.0 (PSO Kubra integration)",
+        "Accept": "application/json, text/plain, */*",
+    })
     return s
-
 
 def _get_text(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[str]:
     r = s.get(url, timeout=timeout)
     if r.status_code != 200:
         return None
     return r.text
-
 
 def _get_json(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[Dict[str, Any]]:
     r = s.get(url, timeout=timeout)
@@ -133,16 +108,14 @@ def _get_json(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[
     except Exception:
         return None
 
-
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0
     p1 = math.radians(lat1)
     p2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dl = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
+    a = math.sin(dphi/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
 def _expand_quadkeys(base_quadkey: str, depth: int) -> List[str]:
     if depth <= 0:
@@ -161,32 +134,21 @@ def _parse_iso(dt_str: Any) -> Optional[datetime]:
     if not isinstance(dt_str, str) or not dt_str:
         return None
     s = dt_str.strip()
-
-    # Handle UTC "Z"
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
-
     try:
         return datetime.fromisoformat(s)
     except ValueError:
         return None
 
-
 def _to_chicago_iso(dt_str: Any) -> Optional[str]:
-    """
-    Convert ISO timestamps to America/Chicago and return ISO string with offset.
-    If parsing fails, return original string if it was a string; else None.
-    """
     if not isinstance(dt_str, str) or not dt_str:
         return None
     dt = _parse_iso(dt_str)
     if not dt:
-        return dt_str  # preserve original string defensively
-
+        return dt_str
     if dt.tzinfo is None:
-        # Treat naive as UTC (defensive)
         dt = dt.replace(tzinfo=UTC_TZ)
-
     return dt.astimezone(CHI_TZ).isoformat()
 
 
@@ -212,13 +174,7 @@ def _qkh_from_quadkey(qk: str, strategy: str) -> str:
 
 _UUID_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 
-
 def _discover_stormcenter_and_view(s: requests.Session, debug: bool) -> Tuple[str, str]:
-    """
-    Preferred: scrape outagemap HTML/JS for the pattern:
-      /stormcenters/<uuid>/views/<uuid>/currentState
-    Fallback: use known-good IDs from DevTools capture.
-    """
     html = _get_text(s, f"{OUTAGEMAP_BASE}/")
     if not html:
         _dbg(debug, "PROBE: failed to load outagemap HTML, falling back to known IDs")
@@ -231,7 +187,6 @@ def _discover_stormcenter_and_view(s: requests.Session, debug: bool) -> Tuple[st
         _dbg(debug, f"DISCOVERY stormcenter_id={sc_id} view_id={view_id} (from HTML)")
         return sc_id, view_id
 
-    # Scan up to 5 JS bundles for the same pattern
     script_urls = re.findall(r'<script[^>]+src="([^"]+)"', html)
     script_urls = [u for u in script_urls if u.endswith(".js")]
     norm = []
@@ -254,11 +209,7 @@ def _discover_stormcenter_and_view(s: requests.Session, debug: bool) -> Tuple[st
     _dbg(debug, "DISCOVERY: could not find IDs in assets; using known DevTools IDs")
     return FALLBACK_STORMCENTER_ID, FALLBACK_VIEW_ID
 
-
 def _fetch_current_state(s: requests.Session, stormcenter_id: str, view_id: str, debug: bool) -> Dict[str, Any]:
-    """
-    PSO uses Kubra API currentState (confirmed by DevTools capture).
-    """
     url = f"{KUBRA_API_BASE}/stormcenters/{stormcenter_id}/views/{view_id}/currentState?preview=false"
     js = _get_json(s, url)
     if not isinstance(js, dict):
@@ -266,13 +217,7 @@ def _fetch_current_state(s: requests.Session, stormcenter_id: str, view_id: str,
     _dbg(debug, "PROBE SUCCESS:", url)
     return js
 
-
 def _extract_cluster_template_and_deployment(state: Dict[str, Any]) -> Tuple[str, str]:
-    """
-    Extract:
-      stormcenterDeploymentId
-      cluster_interval_generation_data (template)
-    """
     dep = state.get("stormcenterDeploymentId")
     if not isinstance(dep, str) or not dep:
         raise PSOKubraDiscoveryError("currentState missing stormcenterDeploymentId")
@@ -287,7 +232,6 @@ def _extract_cluster_template_and_deployment(state: Dict[str, Any]) -> Tuple[str
         templ = templ.split("/public")[0]
 
     return templ, dep
-
 
 def _deep_collect(obj: Any, pred) -> List[Any]:
     out = []
@@ -304,7 +248,6 @@ def _deep_collect(obj: Any, pred) -> List[Any]:
         elif isinstance(cur, list):
             stack.extend(cur)
     return out
-
 
 def _extract_cluster_layers_from_config(config: Dict[str, Any]) -> List[str]:
     layers: List[str] = []
@@ -326,12 +269,7 @@ def _extract_cluster_layers_from_config(config: Dict[str, Any]) -> List[str]:
 
     return layers
 
-
 def _fetch_deployment_or_configuration(s: requests.Session, deployment_id: str, debug: bool) -> Optional[Dict[str, Any]]:
-    """
-    Try multiple likely endpoints to obtain layer configuration.
-    Kept flexible across Kubra deployments.
-    """
     candidates = [
         f"{KUBRA_API_BASE}/deployments/{deployment_id}",
         f"{KUBRA_API_BASE}/deployments/{deployment_id}/configuration",
@@ -350,32 +288,26 @@ def _fetch_deployment_or_configuration(s: requests.Session, deployment_id: str, 
 
     return None
 
-
 def _render_cluster_base(template: str, qkh: str) -> str:
     base = template.replace("(qkh)", qkh).replace("{qkh}", qkh)
     return base.strip("/")
 
 
-# -------------------------- TILE PARSE / NORMALIZATION (OG&E-compatible) --------------------------
+# -------------------------- TILE PARSE / NORMALIZATION --------------------------
 
 def _is_cluster(feature: Dict[str, Any]) -> bool:
     desc = feature.get("desc", {}) or {}
     return bool(desc.get("cluster"))
 
-
 def _extract_location(feature: Dict[str, Any]) -> Optional[Tuple[float, float]]:
-    """
-    Same as OG&E: geom.p[0] is an encoded polyline. First decoded point is the location.
-    """
     geom = feature.get("geom", {}) or {}
     pts = geom.get("p", []) or []
     if not pts:
         return None
     try:
-        return polyline.decode(pts[0])[0]  # (lat, lon)
+        return polyline.decode(pts[0])[0]
     except Exception:
         return None
-
 
 def _coerce_localized_text(val: Any) -> Optional[str]:
     if val is None:
@@ -389,7 +321,6 @@ def _coerce_localized_text(val: Any) -> Optional[str]:
             if isinstance(v, str) and v.strip():
                 return v.strip()
     return None
-
 
 def _normalize_outage(feature: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     desc = feature.get("desc", {}) or {}
@@ -440,7 +371,6 @@ def _normalize_outage(feature: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "latitude": float(loc[0]),
         "longitude": float(loc[1]),
     }
-
 
 def _parse_tile(tile_json: Dict[str, Any]) -> List[Dict[str, Any]]:
     fd = tile_json.get("file_data", []) or []
@@ -540,7 +470,7 @@ class PSOKubraClient:
         layout_fn,
         seen_urls: Set[str],
         seen_quadkeys: Set[Tuple[int, str]],
-        zoom: int,
+        zoom: int
     ) -> List[Dict[str, Any]]:
         key = (zoom, quadkey)
         if key in seen_quadkeys:
@@ -567,7 +497,7 @@ class PSOKubraClient:
         max_radius_km: float,
         max_zoom: int,
         neighbor_depth: int,
-        drill_neighbor_depth: int,
+        drill_neighbor_depth: int
     ) -> Dict[str, Any]:
         if self.entry_zoom is None or self.layer_name is None or self.layout_name is None:
             raise PSOKubraDiscoveryError("Tile scheme not discovered; did probe_tile_scheme() run?")
@@ -583,7 +513,7 @@ class PSOKubraClient:
 
         cluster_queue: List[Tuple[int, Dict[str, Any]]] = []
 
-        # recompute qkh + cluster_base per neighbor seed tile (Kubra shard varies by quadkey)
+        # ✅ CRITICAL: compute qkh + base per seed tile (shard varies by quadkey)
         for q in seeds:
             qkh = _qkh_from_quadkey(q, self.qkh_strategy or "last3_rev")
             cluster_base = _render_cluster_base(self.cluster_template or "", qkh)
@@ -595,7 +525,7 @@ class PSOKubraClient:
                 layout_fn,
                 seen_urls,
                 seen_quadkeys,
-                self.entry_zoom,
+                self.entry_zoom
             )
             for item in raw:
                 feat = item.get("_raw") or {}
@@ -606,11 +536,7 @@ class PSOKubraClient:
                     if oid and oid not in outages_by_id:
                         outages_by_id[oid] = item
 
-        _dbg(
-            self.debug,
-            f"ENTRY FETCH complete: seed_tiles={len(seeds)} "
-            f"(entry_zoom={self.entry_zoom}, layer={self.layer_name}, qkh={self.qkh_strategy}, layout={self.layout_name})",
-        )
+        _dbg(self.debug, f"ENTRY FETCH complete: seed_tiles={len(seeds)} tiles (entry_zoom={self.entry_zoom}, layer={self.layer_name}, qkh={self.qkh_strategy}, layout={self.layout_name})")
 
         while cluster_queue:
             z, item = cluster_queue.pop(0)
@@ -654,26 +580,6 @@ class PSOKubraClient:
         return {"nearest": nearest, "outages": outages}
 
 
-# -------------------------- CACHE HELPERS --------------------------
-
-def _get_cached_profile() -> Optional[Dict[str, Any]]:
-    global _cached_profile
-    with _cache_lock:
-        if not _cached_profile:
-            return None
-        age = time.time() - float(_cached_profile.get("ts", 0.0))
-        if age > _CACHE_TTL_S:
-            _cached_profile = None
-            return None
-        return dict(_cached_profile)
-
-
-def _set_cached_profile(profile: Dict[str, Any]) -> None:
-    global _cached_profile
-    with _cache_lock:
-        _cached_profile = dict(profile)
-
-
 # -------------------------- PUBLIC FUNCTION --------------------------
 
 def fetch_pso_outages(
@@ -685,42 +591,9 @@ def fetch_pso_outages(
     drill_neighbor_depth: int = 1,
     debug: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Primary provider function (contract-compatible with OG&E).
-    Uses cached discovery/tile-scheme to avoid re-probing every request.
-    """
     client = PSOKubraClient(debug=debug)
-
-    prof = _get_cached_profile() if not debug else None  # debug forces fresh discovery
-    if prof:
-        client.stormcenter_id = prof.get("stormcenter_id")
-        client.view_id = prof.get("view_id")
-        client.cluster_template = prof.get("cluster_template")
-        client.deployment_id = prof.get("deployment_id")
-        client.cluster_layers = prof.get("cluster_layers") or []
-        client.entry_zoom = prof.get("entry_zoom")
-        client.layer_name = prof.get("layer_name")
-        client.qkh_strategy = prof.get("qkh_strategy")
-        client.layout_name = prof.get("layout_name")
-    else:
-        client.discover()
-        _base, layer, strat, layout_name, z = client.probe_tile_scheme()
-
-        _set_cached_profile(
-            {
-                "ts": time.time(),
-                "stormcenter_id": client.stormcenter_id,
-                "view_id": client.view_id,
-                "cluster_template": client.cluster_template,
-                "deployment_id": client.deployment_id,
-                "cluster_layers": list(client.cluster_layers),
-                "entry_zoom": z,
-                "layer_name": layer,
-                "qkh_strategy": strat,
-                "layout_name": layout_name,
-            }
-        )
-
+    client.discover()
+    client.probe_tile_scheme()
     return client.fetch_outages_near(
         lat=lat,
         lon=lon,
@@ -729,3 +602,32 @@ def fetch_pso_outages(
         neighbor_depth=neighbor_depth,
         drill_neighbor_depth=drill_neighbor_depth,
     )
+
+
+# -------------------------- SELF TEST --------------------------
+
+if __name__ == "__main__":
+    test_lat, test_lon = 36.15398, -95.99277
+    print("Testing PSO outage fetch (debug on, max_zoom=12)...")
+
+    try:
+        res = fetch_pso_outages(test_lat, test_lon, debug=True)
+        print("\nRESULT SUMMARY")
+        print("Outages returned:", len(res["outages"]))
+        if res["nearest"]:
+            n = res["nearest"]
+            print("Nearest id:", n.get("id"))
+            print("Nearest customers_out:", n.get("customers_out"))
+            print("Nearest crew_status:", n.get("crew_status"))
+            print("Nearest start_time (CT):", n.get("start_time"))
+            print("Nearest etr (CT):", n.get("etr"))
+            print("Nearest distance_km:", round(n.get("distance_km", 0.0), 2))
+        else:
+            print("Nearest outage: null")
+
+    except PSOKubraDiscoveryError as e:
+        print("PSOKubraDiscoveryError:", str(e))
+        print({"nearest": None, "outages": []})
+    except Exception as e:
+        print("UNEXPECTED ERROR:", str(e))
+        print({"nearest": None, "outages": []})
