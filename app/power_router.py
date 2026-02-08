@@ -11,7 +11,7 @@ from app.models import Outage, PowerBlock, PowerMeta
 # ------------------------------------------------------------
 
 # 15 miles radius -> kilometers
-MAX_RADIUS_MILES = 15
+MAX_RADIUS_MILES = 20
 MAX_RADIUS_KM = MAX_RADIUS_MILES * 1.609344
 
 # Timeouts
