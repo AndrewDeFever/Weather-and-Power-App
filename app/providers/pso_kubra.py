@@ -14,7 +14,374 @@ Outage fields (consistent with OG&E):
   customers_out
   n_out
   etr
+  etr_confidence"""
+PSO KUBRA Storm Center outage integration
+
+Matches OG&E provider contract:
+  fetch_pso_outages(lat, lon, max_radius_km=50.0, max_zoom=12,
+                    neighbor_depth=1, drill_neighbor_depth=1, debug=False)
+
+Returns:
+  { "nearest": <outage|null>, "outages": [<outage>...] }
+
+Outage fields (consistent with OG&E):
+  id
+  cluster (bool)
+  customers_out
+  n_out
+  etr
   etr_confidence
+  cause
+  comments
+  crew_status
+  start_time
+  latitude
+  longitude
+  distance_km (added before return)
+
+NOTE:
+- This module normalizes etr/start_time into America/Chicago ISO strings
+  (with offset) to support UI display labeled as CT.
+"""
+
+import math
+import re
+import time
+import threading
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from typing import List, Dict, Any, Optional, Tuple, Set
+
+import requests
+import mercantile
+import polyline
+
+
+# -------------------------- DISCOVERY/TILE-SCHEME CACHE --------------------------
+# PSO discovery + tile-scheme probing is relatively expensive (multiple HTTP calls).
+# Cache derived parameters for a short TTL so most requests only do tile fetches.
+_CACHE_TTL_S = 300  # 5 minutes
+_cache_lock = threading.Lock()
+_cached_profile: Optional[Dict[str, Any]] = None  # {"ts": float, ...fields...}
+
+
+def _get_cached_profile() -> Optional[Dict[str, Any]]:
+    global _cached_profile
+    with _cache_lock:
+        if not _cached_profile:
+            return None
+        age = time.time() - float(_cached_profile.get("ts", 0.0))
+        if age > _CACHE_TTL_S:
+            _cached_profile = None
+            return None
+        return dict(_cached_profile)
+
+
+def _set_cached_profile(profile: Dict[str, Any]) -> None:
+    global _cached_profile
+    with _cache_lock:
+        _cached_profile = dict(profile)
+
+
+# -------------------------- PSO HOSTS / ENTRYPOINTS --------------------------
+
+OUTAGEMAP_BASE = "https://outagemap.psoklahoma.com"
+KUBRA_API_BASE = "https://kubra.io/stormcenter/api/v1"
+KUBRA_TILE_BASE = "https://kubra.io"
+
+CHI_TZ = ZoneInfo("America/Chicago")
+UTC_TZ = ZoneInfo("UTC")
+
+# Known-good IDs you captured (fallback only).
+# These are NOT "guesses" — they are taken from your DevTools capture.
+FALLBACK_STORMCENTER_ID = "4bb3b3bc-e1c4-448b-b806-e4fc85c3b640"
+FALLBACK_VIEW_ID = "e2356e43-c76f-4772-bf85-31240a2cc504"
+
+# PSO-territory probe points (per requirement)
+PROBE_POINTS: List[Tuple[float, float]] = [
+    (36.15398, -95.99277),  # Tulsa
+    (36.05260, -95.79082),  # Broken Arrow
+    (36.13981, -96.10889),  # Sand Springs
+    (35.42702, -99.39026),  # Elk City-ish (corrected west OK longitude)
+]
+
+# User-required zoom candidates; we include 10 as well because a proven tile quadkey is length 10.
+ZOOM_CANDIDATES = [10, 11, 12, 13, 14]
+
+QKH_STRATEGIES = ["last3_rev", "last3", "first3", "first3_rev", "last4_rev"]
+
+URL_LAYOUTS = [
+    ("flat",   lambda base, layer, qk: f"{KUBRA_TILE_BASE}/{base}/public/{layer}/{qk}.json"),
+    ("split2", lambda base, layer, qk: f"{KUBRA_TILE_BASE}/{base}/public/{layer}/{qk[:2]}/{qk}.json"),
+]
+
+# If config parsing fails, we probe these layer candidates without hardcoding a single one.
+FALLBACK_LAYER_CANDIDATES = [f"cluster-{i}" for i in range(1, 9)]
+
+
+# -------------------------- CONTROLLED EXCEPTIONS --------------------------
+
+class PSOKubraError(Exception):
+    pass
+
+class PSOKubraDiscoveryError(PSOKubraError):
+    pass
+
+class PSOKubraFetchError(PSOKubraError):
+    pass
+
+
+# -------------------------- HELPERS --------------------------
+
+def _dbg(debug: bool, *args) -> None:
+    if debug:
+        print(*args)
+
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": "NOCTriage/1.0 (PSO Kubra integration)",
+        "Accept": "application/json, text/plain, */*",
+    })
+    return s
+
+def _get_text(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[str]:
+    r = s.get(url, timeout=timeout)
+    if r.status_code != 200:
+        return None
+    return r.text
+
+def _get_json(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[Dict[str, Any]]:
+    r = s.get(url, timeout=timeout)
+    if r.status_code != 200:
+        return None
+    try:
+        return r.json()
+    except Exception:
+        return None
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R = 6371.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+def _expand_quadkeys(base_quadkey: str, depth: int) -> List[str]:
+    if depth <= 0:
+        return [base_quadkey]
+    t = mercantile.quadkey_to_tile(base_quadkey)
+    keys = []
+    for dx in range(-depth, depth + 1):
+        for dy in range(-depth, depth + 1):
+            keys.append(mercantile.quadkey(mercantile.Tile(t.x + dx, t.y + dy, t.z)))
+    return list(set(keys))
+
+
+# -------------------------- TIME NORMALIZATION --------------------------
+
+def _parse_iso(dt_str: Any) -> Optional[datetime]:
+    if not isinstance(dt_str, str) or not dt_str:
+        return None
+    s = dt_str.strip()
+
+    # Handle UTC "Z"
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+def _to_chicago_iso(dt_str: Any) -> Optional[str]:
+    """
+    Convert ISO timestamps to America/Chicago and return ISO string with offset.
+    If parsing fails, return original string if it was a string; else None.
+    """
+    if not isinstance(dt_str, str) or not dt_str:
+        return None
+    dt = _parse_iso(dt_str)
+    if not dt:
+        return dt_str  # preserve original string defensively
+
+    if dt.tzinfo is None:
+        # Treat naive as UTC (defensive)
+        dt = dt.replace(tzinfo=UTC_TZ)
+
+    return dt.astimezone(CHI_TZ).isoformat()
+
+
+# -------------------------- qkh shard helpers --------------------------
+
+def _qkh_from_quadkey(qk: str, strategy: str) -> str:
+    if not qk:
+        return "000"
+    if strategy == "last3":
+        return qk[-3:].rjust(3, "0")
+    if strategy == "last3_rev":
+        return qk[-3:].rjust(3, "0")[::-1]
+    if strategy == "first3":
+        return qk[:3].ljust(3, "0")
+    if strategy == "first3_rev":
+        return qk[:3].ljust(3, "0")[::-1]
+    if strategy == "last4_rev":
+        return qk[-4:].rjust(4, "0")[::-1]
+    return qk[-3:].rjust(3, "0")[::-1]
+
+
+# -------------------------- DISCOVERY --------------------------
+
+_UUID_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+
+def _discover_stormcenter_and_view(s: requests.Session, debug: bool) -> Tuple[str, str]:
+    """
+    Preferred: scrape outagemap HTML/JS for the pattern:
+      /stormcenters/<uuid>/views/<uuid>/currentState
+    Fallback: use known-good IDs from DevTools capture.
+    """
+    html = _get_text(s, f"{OUTAGEMAP_BASE}/")
+    if not html:
+        _dbg(debug, "PROBE: failed to load outagemap HTML, falling back to known IDs")
+        return FALLBACK_STORMCENTER_ID, FALLBACK_VIEW_ID
+
+    pat = re.compile(r"/stormcenters/(" + _UUID_RE + r")/views/(" + _UUID_RE + r")/currentState")
+    m = pat.search(html)
+    if m:
+        sc_id, view_id = m.group(1), m.group(2)
+        _dbg(debug, f"DISCOVERY stormcenter_id={sc_id} view_id={view_id} (from HTML)")
+        return sc_id, view_id
+
+    # Scan up to 5 JS bundles for the same pattern
+    script_urls = re.findall(r'<script[^>]+src="([^"]+)"', html)
+    script_urls = [u for u in script_urls if u.endswith(".js")]
+    norm = []
+    for u in script_urls[:5]:
+        if u.startswith("http"):
+            norm.append(u)
+        else:
+            norm.append(f"{OUTAGEMAP_BASE}{u if u.startswith('/') else '/' + u}")
+
+    for u in norm:
+        js = _get_text(s, u)
+        if not js:
+            continue
+        m = pat.search(js)
+        if m:
+            sc_id, view_id = m.group(1), m.group(2)
+            _dbg(debug, f"DISCOVERY stormcenter_id={sc_id} view_id={view_id} (from JS)")
+            return sc_id, view_id
+
+    _dbg(debug, "DISCOVERY: could not find IDs in assets; using known DevTools IDs")
+    return FALLBACK_STORMCENTER_ID, FALLBACK_VIEW_ID
+
+
+def _fetch_current_state(s: requests.Session, stormcenter_id: str, view_id: str, debug: bool) -> Dict[str, Any]:
+    """
+    PSO uses Kubra API currentState (confirmed by DevTools capture).
+    """
+    url = f"{KUBRA_API_BASE}/stormcenters/{stormcenter_id}/views/{view_id}/currentState?preview=false"
+    js = _get_json(s, url)
+    if not isinstance(js, dict):
+        raise PSOKubraDiscoveryError(f"Failed to fetch currentState from: {url}")
+    _dbg(debug, "PROBE SUCCESS:", url)
+    return js
+
+
+def _extract_cluster_template_and_deployment(state: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    Extract:
+      stormcenterDeploymentId
+      cluster_interval_generation_data (template)
+    Example:
+      state["stormcenterDeploymentId"] = ...
+      state["data"]["cluster_interval_generation_data"] = "cluster-data/(qkh)/<instance>/<generation>"
+    """
+    dep = state.get("stormcenterDeploymentId")
+    if not isinstance(dep, str) or not dep:
+        raise PSOKubraDiscoveryError("Missing stormcenterDeploymentId in currentState")
+
+    data = state.get("data") or {}
+    templ = None
+    if isinstance(data, dict):
+        templ = data.get("cluster_interval_generation_data")
+
+    if not isinstance(templ, str) or not templ:
+        raise PSOKubraDiscoveryError("Missing cluster_interval_generation_data in currentState.data")
+
+    return templ, dep
+
+
+# ... [UNCHANGED CONTENT OMITTED IN THIS VIEW FOR BREVITY IN CHATGPT UI] ...
+# IMPORTANT: In your editor, keep the remainder of the module EXACTLY as-is from your current file,
+# except for the fetch_pso_outages() function below.
+#
+# Reason: the bulk of the PSO client logic is lengthy; only the cache wrapper is the behavioral change.
+#
+# If you want me to paste the *entire* rest-of-file in one shot (it’s large),
+# say “paste full PSO file no omissions” and I will output it in full.
+
+# -------------------------- PUBLIC FUNCTION --------------------------
+
+def fetch_pso_outages(
+    lat: float,
+    lon: float,
+    max_radius_km: float = 50.0,
+    max_zoom: int = 12,
+    neighbor_depth: int = 1,
+    drill_neighbor_depth: int = 1,
+    debug: bool = False,
+) -> Dict[str, Any]:
+    """
+    Primary provider function (contract-compatible with OG&E).
+
+    Optimization:
+    - Cache the discovery + tile-scheme probe outputs for a short TTL so most requests only do tile fetches.
+    - If debug=True, cache is bypassed to make troubleshooting deterministic.
+    """
+    client = PSOKubraClient(debug=debug)
+
+    prof = _get_cached_profile() if not debug else None
+    if prof:
+        client.stormcenter_id = prof.get("stormcenter_id")
+        client.view_id = prof.get("view_id")
+        client.cluster_template = prof.get("cluster_template")
+        client.deployment_id = prof.get("deployment_id")
+        client.cluster_layers = prof.get("cluster_layers") or []
+        client.layer_name = prof.get("layer_name")
+        client.entry_zoom = prof.get("entry_zoom")
+        client.qkh_strategy = prof.get("qkh_strategy")
+        client.layout_name = prof.get("layout_name")
+    else:
+        client.discover()
+        client.probe_tile_scheme()
+
+        _set_cached_profile(
+            {
+                "ts": time.time(),
+                "stormcenter_id": client.stormcenter_id,
+                "view_id": client.view_id,
+                "deployment_id": getattr(client, "deployment_id", None),
+                "cluster_template": client.cluster_template,
+                "cluster_layers": list(getattr(client, "cluster_layers", []) or []),
+                "layer_name": getattr(client, "layer_name", None),
+                "entry_zoom": getattr(client, "entry_zoom", None),
+                "qkh_strategy": getattr(client, "qkh_strategy", None),
+                "layout_name": getattr(client, "layout_name", None),
+            }
+        )
+
+    return client.fetch_outages_near(
+        lat=lat,
+        lon=lon,
+        max_radius_km=max_radius_km,
+        max_zoom=max_zoom,
+        neighbor_depth=neighbor_depth,
+        drill_neighbor_depth=drill_neighbor_depth,
+    )
+
   cause
   comments
   crew_status
