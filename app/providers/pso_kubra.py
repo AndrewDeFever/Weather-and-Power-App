@@ -31,6 +31,7 @@ NOTE:
 import math
 import re
 import time
+import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional, Tuple, Set
@@ -38,7 +39,7 @@ from typing import List, Dict, Any, Optional, Tuple, Set
 import requests
 import mercantile
 import polyline
-import threading
+
 
 # -------------------------- DISCOVERY/TILE-SCHEME CACHE --------------------------
 # PSO discovery + tile-scheme probing is relatively expensive (multiple HTTP calls).
@@ -46,6 +47,7 @@ import threading
 _CACHE_TTL_S = 300  # 5 minutes
 _cache_lock = threading.Lock()
 _cached_profile: Optional[Dict[str, Any]] = None  # {ts: float, ...fields...}
+
 
 # -------------------------- PSO HOSTS / ENTRYPOINTS --------------------------
 
@@ -75,7 +77,7 @@ ZOOM_CANDIDATES = [10, 11, 12, 13, 14]
 QKH_STRATEGIES = ["last3_rev", "last3", "first3", "first3_rev", "last4_rev"]
 
 URL_LAYOUTS = [
-    ("flat",   lambda base, layer, qk: f"{KUBRA_TILE_BASE}/{base}/public/{layer}/{qk}.json"),
+    ("flat", lambda base, layer, qk: f"{KUBRA_TILE_BASE}/{base}/public/{layer}/{qk}.json"),
     ("split2", lambda base, layer, qk: f"{KUBRA_TILE_BASE}/{base}/public/{layer}/{qk[:2]}/{qk}.json"),
 ]
 
@@ -88,8 +90,10 @@ FALLBACK_LAYER_CANDIDATES = [f"cluster-{i}" for i in range(1, 9)]
 class PSOKubraError(Exception):
     pass
 
+
 class PSOKubraDiscoveryError(PSOKubraError):
     pass
+
 
 class PSOKubraFetchError(PSOKubraError):
     pass
@@ -101,19 +105,24 @@ def _dbg(debug: bool, *args) -> None:
     if debug:
         print(*args)
 
+
 def _session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({
-        "User-Agent": "NOCTriage/1.0 (PSO Kubra integration)",
-        "Accept": "application/json, text/plain, */*",
-    })
+    s.headers.update(
+        {
+            "User-Agent": "NOCTriage/1.0 (PSO Kubra integration)",
+            "Accept": "application/json, text/plain, */*",
+        }
+    )
     return s
+
 
 def _get_text(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[str]:
     r = s.get(url, timeout=timeout)
     if r.status_code != 200:
         return None
     return r.text
+
 
 def _get_json(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[Dict[str, Any]]:
     r = s.get(url, timeout=timeout)
@@ -124,14 +133,16 @@ def _get_json(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[
     except Exception:
         return None
 
+
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0
     p1 = math.radians(lat1)
     p2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dl = math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
-    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
 
 def _expand_quadkeys(base_quadkey: str, depth: int) -> List[str]:
     if depth <= 0:
@@ -159,6 +170,7 @@ def _parse_iso(dt_str: Any) -> Optional[datetime]:
         return datetime.fromisoformat(s)
     except ValueError:
         return None
+
 
 def _to_chicago_iso(dt_str: Any) -> Optional[str]:
     """
@@ -199,6 +211,7 @@ def _qkh_from_quadkey(qk: str, strategy: str) -> str:
 # -------------------------- DISCOVERY --------------------------
 
 _UUID_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+
 
 def _discover_stormcenter_and_view(s: requests.Session, debug: bool) -> Tuple[str, str]:
     """
@@ -259,9 +272,6 @@ def _extract_cluster_template_and_deployment(state: Dict[str, Any]) -> Tuple[str
     Extract:
       stormcenterDeploymentId
       cluster_interval_generation_data (template)
-    Example:
-      state["stormcenterDeploymentId"] = ...
-      state["data"]["cluster_interval_generation_data"] = "cluster-data/(qkh)/<instance>/<generation>"
     """
     dep = state.get("stormcenterDeploymentId")
     if not isinstance(dep, str) or not dep:
@@ -323,10 +333,8 @@ def _fetch_deployment_or_configuration(s: requests.Session, deployment_id: str, 
     Kept flexible across Kubra deployments.
     """
     candidates = [
-        # Kubra API deployments (common)
         f"{KUBRA_API_BASE}/deployments/{deployment_id}",
         f"{KUBRA_API_BASE}/deployments/{deployment_id}/configuration",
-        # Storm center host sometimes exposes config
         f"{OUTAGEMAP_BASE}/configuration/{deployment_id}",
         f"{OUTAGEMAP_BASE}/configuration/{deployment_id}.json",
         f"{OUTAGEMAP_BASE}/public/configuration/{deployment_id}",
@@ -344,11 +352,6 @@ def _fetch_deployment_or_configuration(s: requests.Session, deployment_id: str, 
 
 
 def _render_cluster_base(template: str, qkh: str) -> str:
-    """
-    Example template:
-      "cluster-data/(qkh)/43704a8f-.../d6beb6dc-..."
-    Replace (qkh) token and return base path (no /public).
-    """
     base = template.replace("(qkh)", qkh).replace("{qkh}", qkh)
     return base.strip("/")
 
@@ -358,6 +361,7 @@ def _render_cluster_base(template: str, qkh: str) -> str:
 def _is_cluster(feature: Dict[str, Any]) -> bool:
     desc = feature.get("desc", {}) or {}
     return bool(desc.get("cluster"))
+
 
 def _extract_location(feature: Dict[str, Any]) -> Optional[Tuple[float, float]]:
     """
@@ -372,6 +376,7 @@ def _extract_location(feature: Dict[str, Any]) -> Optional[Tuple[float, float]]:
     except Exception:
         return None
 
+
 def _coerce_localized_text(val: Any) -> Optional[str]:
     if val is None:
         return None
@@ -384,6 +389,7 @@ def _coerce_localized_text(val: Any) -> Optional[str]:
             if isinstance(v, str) and v.strip():
                 return v.strip()
     return None
+
 
 def _normalize_outage(feature: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     desc = feature.get("desc", {}) or {}
@@ -417,7 +423,6 @@ def _normalize_outage(feature: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except Exception:
         n_out = None
 
-    # Convert times to America/Chicago for UI display consistency
     etr_local = _to_chicago_iso(desc.get("etr"))
     start_local = _to_chicago_iso(desc.get("start_time"))
 
@@ -434,8 +439,8 @@ def _normalize_outage(feature: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "start_time": start_local,
         "latitude": float(loc[0]),
         "longitude": float(loc[1]),
-        # distance_km added later
     }
+
 
 def _parse_tile(tile_json: Dict[str, Any]) -> List[Dict[str, Any]]:
     fd = tile_json.get("file_data", []) or []
@@ -465,7 +470,6 @@ class PSOKubraClient:
         self.deployment_id: Optional[str] = None
         self.cluster_layers: List[str] = []
 
-        # discovered probe combo
         self.entry_zoom: Optional[int] = None
         self.layer_name: Optional[str] = None
         self.qkh_strategy: Optional[str] = None
@@ -498,10 +502,6 @@ class PSOKubraClient:
         return layout_fn(cluster_base, layer, quadkey)
 
     def probe_tile_scheme(self) -> Tuple[str, str, str, str, int]:
-        """
-        Probe (layer, zoom, qkh strategy, url layout) until a tile returns file_data JSON.
-        Returns: (cluster_base_path, layer_name, qkh_strategy, layout_name, entry_zoom)
-        """
         if not self.cluster_template:
             raise PSOKubraDiscoveryError("Missing cluster template; did discover() run?")
 
@@ -540,7 +540,7 @@ class PSOKubraClient:
         layout_fn,
         seen_urls: Set[str],
         seen_quadkeys: Set[Tuple[int, str]],
-        zoom: int
+        zoom: int,
     ) -> List[Dict[str, Any]]:
         key = (zoom, quadkey)
         if key in seen_quadkeys:
@@ -567,7 +567,7 @@ class PSOKubraClient:
         max_radius_km: float,
         max_zoom: int,
         neighbor_depth: int,
-        drill_neighbor_depth: int
+        drill_neighbor_depth: int,
     ) -> Dict[str, Any]:
         if self.entry_zoom is None or self.layer_name is None or self.layout_name is None:
             raise PSOKubraDiscoveryError("Tile scheme not discovered; did probe_tile_scheme() run?")
@@ -583,7 +583,7 @@ class PSOKubraClient:
 
         cluster_queue: List[Tuple[int, Dict[str, Any]]] = []
 
-        # ✅ FIX: recompute qkh + cluster_base per neighbor seed tile (Kubra shard varies by quadkey)
+        # recompute qkh + cluster_base per neighbor seed tile (Kubra shard varies by quadkey)
         for q in seeds:
             qkh = _qkh_from_quadkey(q, self.qkh_strategy or "last3_rev")
             cluster_base = _render_cluster_base(self.cluster_template or "", qkh)
@@ -595,7 +595,7 @@ class PSOKubraClient:
                 layout_fn,
                 seen_urls,
                 seen_quadkeys,
-                self.entry_zoom
+                self.entry_zoom,
             )
             for item in raw:
                 feat = item.get("_raw") or {}
@@ -609,7 +609,7 @@ class PSOKubraClient:
         _dbg(
             self.debug,
             f"ENTRY FETCH complete: seed_tiles={len(seeds)} "
-            f"(entry_zoom={self.entry_zoom}, layer={self.layer_name}, qkh={self.qkh_strategy}, layout={self.layout_name})"
+            f"(entry_zoom={self.entry_zoom}, layer={self.layer_name}, qkh={self.qkh_strategy}, layout={self.layout_name})",
         )
 
         while cluster_queue:
@@ -667,6 +667,7 @@ def _get_cached_profile() -> Optional[Dict[str, Any]]:
             return None
         return dict(_cached_profile)
 
+
 def _set_cached_profile(profile: Dict[str, Any]) -> None:
     global _cached_profile
     with _cache_lock:
@@ -703,20 +704,22 @@ def fetch_pso_outages(
         client.layout_name = prof.get("layout_name")
     else:
         client.discover()
-        base, layer, strat, layout_name, z = client.probe_tile_scheme()
+        _base, layer, strat, layout_name, z = client.probe_tile_scheme()
 
-        _set_cached_profile({
-            "ts": time.time(),
-            "stormcenter_id": client.stormcenter_id,
-            "view_id": client.view_id,
-            "cluster_template": client.cluster_template,
-            "deployment_id": client.deployment_id,
-            "cluster_layers": list(client.cluster_layers),
-            "entry_zoom": z,
-            "layer_name": layer,
-            "qkh_strategy": strat,
-            "layout_name": layout_name,
-        })
+        _set_cached_profile(
+            {
+                "ts": time.time(),
+                "stormcenter_id": client.stormcenter_id,
+                "view_id": client.view_id,
+                "cluster_template": client.cluster_template,
+                "deployment_id": client.deployment_id,
+                "cluster_layers": list(client.cluster_layers),
+                "entry_zoom": z,
+                "layer_name": layer,
+                "qkh_strategy": strat,
+                "layout_name": layout_name,
+            }
+        )
 
     return client.fetch_outages_near(
         lat=lat,
@@ -726,32 +729,3 @@ def fetch_pso_outages(
         neighbor_depth=neighbor_depth,
         drill_neighbor_depth=drill_neighbor_depth,
     )
-
-
-# -------------------------- SELF TEST --------------------------
-
-if __name__ == "__main__":
-    test_lat, test_lon = 36.15398, -95.99277
-    print("Testing PSO outage fetch (debug on, max_zoom=12)...")
-
-    try:
-        res = fetch_pso_outages(test_lat, test_lon, debug=True)
-        print("\nRESULT SUMMARY")
-        print("Outages returned:", len(res["outages"]))
-        if res["nearest"]:
-            n = res["nearest"]
-            print("Nearest id:", n.get("id"))
-            print("Nearest customers_out:", n.get("customers_out"))
-            print("Nearest crew_status:", n.get("crew_status"))
-            print("Nearest start_time (CT):", n.get("start_time"))
-            print("Nearest etr (CT):", n.get("etr"))
-            print("Nearest distance_km:", round(n.get("distance_km", 0.0), 2))
-        else:
-            print("Nearest outage: null")
-
-    except PSOKubraDiscoveryError as e:
-        print("PSOKubraDiscoveryError:", str(e))
-        print({"nearest": None, "outages": []})
-    except Exception as e:
-        print("UNEXPECTED ERROR:", str(e))
-        print({"nearest": None, "outages": []})
