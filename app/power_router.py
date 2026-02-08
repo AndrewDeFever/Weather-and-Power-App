@@ -10,9 +10,9 @@ from app.models import Outage, PowerBlock, PowerMeta
 # Operational tuning knobs
 # ------------------------------------------------------------
 
-# 10 miles radius -> kilometers
-MAX_RADIUS_MILES = 20
-MAX_RADIUS_KM = MAX_RADIUS_MILES * 1.609344  # 16.09344
+# 15 miles radius -> kilometers
+MAX_RADIUS_MILES = 15
+MAX_RADIUS_KM = MAX_RADIUS_MILES * 1.609344
 
 # Timeouts
 DIRECT_TIMEOUT_S = 30  # known utility
