@@ -44,7 +44,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-          python -m pip install pytest ruff
+          python -m pip install -r requirements-dev.txt
 
       - name: "Fail-fast: syntax + import checks"
         run: |
