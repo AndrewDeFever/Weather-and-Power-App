@@ -7,13 +7,31 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import requests
-from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.power_router import get_power_status, probe_power_status
 
 app = FastAPI(title="Weather & Power Status", version="0.8.2")
+
+# ----------------------------
+# Global error handling (guarantee JSON responses)
+# ----------------------------
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    # Never let an exception bubble into an HTML 500 page.
+    # Keep response shape backward compatible (do not remove fields).
+    err = f"{type(exc).__name__}: {exc}"
+    payload = {
+        "query": None,
+        "resolved": {"type": "unknown", "name": "", "site_id": None},
+        "provider": provider_info(None),
+        "weather": empty_weather(error=err),
+        "power": empty_power(None, err, ok=False),
+        "probe": None,
+    }
+    return JSONResponse(status_code=200, content=payload)
 
 
 # ----------------------------
@@ -57,19 +75,19 @@ def parse_latlon(q: str) -> Optional[Tuple[float, float]]:
 
 
 def provider_info(utility: Optional[str]) -> Dict[str, Any]:
-    u = (utility or "").strip().upper() or None
-    if u == "OGE":
-        return {
-            "utility": "OGE",
-            "name": "OG&E",
-            "outage_map": "https://oge.com/wps/portal/oge/outages/systemwatch/",
-            "platform": "KUBRA",
-        }
+    u = (utility or "").strip().upper()
     if u == "PSO":
         return {
             "utility": "PSO",
             "name": "PSO",
             "outage_map": "https://outagemap.psoklahoma.com/",
+            "platform": "KUBRA",
+        }
+    if u == "OGE":
+        return {
+            "utility": "OGE",
+            "name": "OG&E",
+            "outage_map": "https://outagemap.oge.com/",
             "platform": "KUBRA",
         }
     if u == "EVERGY":
@@ -86,7 +104,7 @@ def provider_info(utility: Optional[str]) -> Dict[str, Any]:
             "outage_map": "https://stormcenter.oncor.com/",
             "platform": "KUBRA",
         }
-    if u in {"AUSTIN", "AUSTINENERGY", "AUSTIN_ENERGY", "AE"}:
+    if u == "AUSTIN":
         return {
             "utility": "AUSTIN",
             "name": "Austin Energy",
@@ -180,224 +198,169 @@ def deg_to_cardinal(deg: Optional[float]) -> Optional[str]:
     return dirs[idx]
 
 
-def to_mph(value: Any, unit_code: Any) -> Optional[float]:
-    """
-    Convert an NWS observation numeric 'value' to mph using the provided unitCode.
-
-    Known seen in the wild:
-      - wmoUnit:m_s-1
-      - wmoUnit:km_h-1
-
-    If the unit is unknown, return None rather than emitting a wrong mph value.
-    """
-    v = to_float(value)
-    if v is None:
-        return None
-    uc = (unit_code or "").strip()
-    if "m_s-1" in uc:
-        return mps_to_mph(v)
-    if "km_h-1" in uc:
-        return kmh_to_mph(v)
-    return None
-
-
 # ----------------------------
-# Site registry
+# Load sites
 # ----------------------------
-def load_sites() -> Dict[str, Dict[str, Any]]:
-    p = Path(__file__).parent / "data" / "sites.json"
-    raw = p.read_text(encoding="utf-8-sig")
-    data = json.loads(raw)
-
-    if isinstance(data, dict) and "sites" in data and isinstance(data["sites"], list):
-        sites_list = data["sites"]
-    elif isinstance(data, list):
-        sites_list = data
-    elif isinstance(data, dict):
-        sites_list = list(data.values())
-    else:
-        sites_list = []
-
-    out: Dict[str, Dict[str, Any]] = {}
-    for s in sites_list:
-        if not isinstance(s, dict):
-            continue
-        sid = (s.get("site_id") or s.get("id") or "").strip()
-        if not sid:
-            continue
-
-        out[sid.upper()] = {
-            "site_id": sid.upper(),
-            "name": s.get("name") or sid.upper(),
-            "lat": to_float(s.get("lat")),
-            "lon": to_float(s.get("lon")),
-            "utility": (s.get("utility") or "").strip().upper() or None,
-            "sev": s.get("sev") or s.get("severity"),
-            # address fields passthrough from sites.json
-            "address": s.get("address"),
-            "city": s.get("city"),
-            "state": s.get("state"),
-            "zip": s.get("zip"),
-            "enabled": s.get("enabled", True),
-            "tz": s.get("tz"),
-        }
-    return out
-
-
-SITES: Dict[str, Dict[str, Any]] = load_sites()
+SITES_PATH = Path(__file__).resolve().parent / "data" / "sites.json"
+try:
+    SITES = json.loads(SITES_PATH.read_text(encoding="utf-8"))
+except Exception:
+    SITES = {}
 
 
 # ----------------------------
 # Weather (NWS)
 # ----------------------------
+NWS_POINTS = "https://api.weather.gov/points/{lat},{lon}"
+NWS_OBSERVATION = "https://api.weather.gov/stations/{station}/observations/latest"
+NWS_ALERTS = "https://api.weather.gov/alerts/active?point={lat},{lon}"
+
+DEFAULT_HEADERS = {
+    "User-Agent": "WeatherPowerStatus/1.0 (contact: subrealstudios.com)",
+    "Accept": "application/geo+json, application/json",
+}
+
+
 def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
-    headers = {"User-Agent": "NOCTriage/1.0 (weather-power-status)"}
-    points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}"
+    # Step 1: points lookup
+    points_url = NWS_POINTS.format(lat=lat, lon=lon)
+    r = requests.get(points_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+    r.raise_for_status()
+    pts = r.json()
 
-    out = empty_weather()
-
-    # Use a Session to reuse connections within this request.
-    s = requests.Session()
-    s.headers.update(headers)
-
-    # --- points (used only to discover station + forecast URL) ---
-    try:
-        r = s.get(points_url, timeout=HTTP_TIMEOUT_S)
-        r.raise_for_status()
-        points_data = r.json()
-    except Exception as e:
-        return empty_weather(error=f"NWS points fetch failed: {type(e).__name__}: {e}")
-
-    props = points_data.get("properties") or {}
+    props = (pts.get("properties") or {})
     stations_url = props.get("observationStations")
-    forecast_url = props.get("forecast")  # used for detailedForecast text + temp fallback
+    forecast_url = props.get("forecast")
+    forecast_hourly_url = props.get("forecastHourly")
 
-    # --- observed (preferred for all A-fields) ---
-    station_id: Optional[str] = None
-    obs_url: Optional[str] = None
-    try:
-        if stations_url:
-            sr = s.get(stations_url, timeout=HTTP_TIMEOUT_S)
-            sr.raise_for_status()
-            feats = sr.json().get("features") or []
-            if feats:
+    # Step 2: stations list (best effort)
+    station_id = None
+    if stations_url:
+        try:
+            rs = requests.get(stations_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+            rs.raise_for_status()
+            st = rs.json()
+            feats = st.get("features") or []
+            if feats and isinstance(feats, list):
                 station_id = (feats[0].get("properties") or {}).get("stationIdentifier")
+        except Exception:
+            station_id = None
 
-        if station_id:
-            obs_url = f"https://api.weather.gov/stations/{station_id}/observations/latest"
-            orq = s.get(obs_url, timeout=HTTP_TIMEOUT_S)
-            orq.raise_for_status()
-            obs_props = orq.json().get("properties") or {}
+    # Step 3: observation (best effort). If it fails, fallback to forecast for temp/condition.
+    out = empty_weather()
+    out["temp_source_url"] = None
 
-            temp_c = (obs_props.get("temperature") or {}).get("value")
-            if temp_c is not None:
-                out["temperature_f"] = int(round(c_to_f(float(temp_c))))
+    if station_id:
+        obs_url = NWS_OBSERVATION.format(station=station_id)
+        out["temp_source_url"] = obs_url
+        try:
+            ro = requests.get(obs_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+            ro.raise_for_status()
+            obs = ro.json()
+            oprops = (obs.get("properties") or {})
+            t_c = (oprops.get("temperature") or {}).get("value")
+            if isinstance(t_c, (int, float)):
+                out["temperature_f"] = round(c_to_f(float(t_c)), 1)
                 out["temp_kind"] = "observed"
                 out["temp_source"] = "NWS_OBSERVATION"
-                out["temp_source_url"] = obs_url
-
-            out["condition"] = obs_props.get("textDescription") or out["condition"]
-
-            ws = obs_props.get("windSpeed") or {}
-            ws_mph = to_mph(ws.get("value"), ws.get("unitCode"))
-            if ws_mph is not None:
-                out["wind_speed_mph"] = int(round(ws_mph))
-
-            wg = obs_props.get("windGust") or {}
-            wg_mph = to_mph(wg.get("value"), wg.get("unitCode"))
-            if wg_mph is not None:
-                out["wind_gust_mph"] = int(round(wg_mph))
-
-            wind_dir = (obs_props.get("windDirection") or {}).get("value")
-            if wind_dir is not None:
-                out["wind_direction_deg"] = int(round(float(wind_dir)))
-                out["wind_direction_cardinal"] = deg_to_cardinal(float(wind_dir))
-
-            p1 = (obs_props.get("precipitationLastHour") or {}).get("value")
-            if p1 is not None:
-                out["precip_last_hour_in"] = round(mm_to_in(float(p1)), 2)
-
-            wc_c = (obs_props.get("windChill") or {}).get("value")
-            if wc_c is not None:
-                out["wind_chill_f"] = int(round(c_to_f(float(wc_c))))
-
-            hi_c = (obs_props.get("heatIndex") or {}).get("value")
-            if hi_c is not None:
-                out["heat_index_f"] = int(round(c_to_f(float(hi_c))))
-
-            out["observation_time"] = obs_props.get("timestamp")
             out["station_id"] = station_id
-    except Exception:
-        # If observations fail, we do NOT try to fill all fields from forecast.
-        pass
-
-    # Fetch forecast once (only if needed for fallback temp or detailedForecast)
-    forecast_json: Optional[Dict[str, Any]] = None
-    if forecast_url and (out.get("temperature_f") is None or out.get("detailedForecast") is None):
-        try:
-            fc = s.get(forecast_url, timeout=HTTP_TIMEOUT_S)
-            fc.raise_for_status()
-            forecast_json = fc.json()
+            out["observation_time"] = oprops.get("timestamp")
+            # winds
+            wspd = (oprops.get("windSpeed") or {}).get("value")
+            wgst = (oprops.get("windGust") or {}).get("value")
+            wdir = (oprops.get("windDirection") or {}).get("value")
+            if isinstance(wspd, (int, float)):
+                out["wind_speed_mph"] = round(mps_to_mph(float(wspd)), 1)
+            if isinstance(wgst, (int, float)):
+                out["wind_gust_mph"] = round(mps_to_mph(float(wgst)), 1)
+            if isinstance(wdir, (int, float)):
+                out["wind_direction_deg"] = float(wdir)
+                out["wind_direction_cardinal"] = deg_to_cardinal(float(wdir))
+            # precip
+            p = (oprops.get("precipitationLastHour") or {}).get("value")
+            if isinstance(p, (int, float)):
+                out["precip_last_hour_in"] = round(mm_to_in(float(p)), 3)
+            # wind chill / heat index
+            wc = (oprops.get("windChill") or {}).get("value")
+            hi = (oprops.get("heatIndex") or {}).get("value")
+            if isinstance(wc, (int, float)):
+                out["wind_chill_f"] = round(c_to_f(float(wc)), 1)
+            if isinstance(hi, (int, float)):
+                out["heat_index_f"] = round(c_to_f(float(hi)), 1)
+            # condition
+            out["condition"] = oprops.get("textDescription")
         except Exception:
-            forecast_json = None
+            pass
 
-    # --- temperature fallback ONLY (clearly labeled) ---
-    if out.get("temperature_f") is None and forecast_json:
+    # Step 4: forecast fallback for temp/condition (best effort)
+    if out.get("temperature_f") is None and forecast_url:
         try:
-            periods = (forecast_json.get("properties") or {}).get("periods") or []
-            if periods:
-                p0 = periods[0]
-                out["temperature_f"] = p0.get("temperature")
-                if out.get("condition") is None:
-                    out["condition"] = p0.get("shortForecast")
-                out["temp_kind"] = "forecast_fallback"
-                out["temp_source"] = "NWS_FORECAST"
-                out["temp_source_url"] = forecast_url
+            rf = requests.get(forecast_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+            rf.raise_for_status()
+            fc = rf.json()
+            periods = ((fc.get("properties") or {}).get("periods") or [])
+            if periods and isinstance(periods, list):
+                p0 = periods[0] or {}
+                t = p0.get("temperature")
+                if isinstance(t, (int, float)):
+                    out["temperature_f"] = float(t)
+                    out["temp_kind"] = "forecast_fallback"
+                    out["temp_source"] = "NWS_FORECAST"
+                    out["temp_source_url"] = forecast_url
+                out["condition"] = p0.get("shortForecast") or out.get("condition")
                 out["detailedForecast"] = p0.get("detailedForecast")
         except Exception:
             pass
 
-    # --- detailedForecast text (requested) ---
-    if out.get("detailedForecast") is None and forecast_json:
-        try:
-            periods = (forecast_json.get("properties") or {}).get("periods") or []
-            if periods:
-                out["detailedForecast"] = periods[0].get("detailedForecast")
-        except Exception:
-            pass
-
-    # --- alerts ---
-    alerts = []
-    has_weather_alert = False
-    max_alert_severity = "none"
+    # Step 5: alerts (best effort)
+    alerts_url = NWS_ALERTS.format(lat=lat, lon=lon)
     try:
-        alerts_url = f"https://api.weather.gov/alerts/active?point={lat:.4f},{lon:.4f}"
-        ar = s.get(alerts_url, timeout=HTTP_TIMEOUT_S)
-        ar.raise_for_status()
-        feats = ar.json().get("features") or []
-        for f in feats:
-            p = f.get("properties") or {}
-            alerts.append(
-                {
-                    "event": p.get("event"),
-                    "severity": p.get("severity"),
-                    "certainty": p.get("certainty"),
-                    "urgency": p.get("urgency"),
-                    "headline": p.get("headline"),
-                    "sent": p.get("sent"),
-                    "onset": p.get("onset"),
-                    "effective": p.get("effective"),
-                    "ends": p.get("ends"),
-                    "expires": p.get("expires"),
-                    "description": p.get("description"),
-                    "instruction": p.get("instruction"),
-                }
-            )
-        if alerts:
-            has_weather_alert = True
-            max_alert_severity = (alerts[0].get("severity") or "unknown").lower()
+        ra = requests.get(alerts_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+        ra.raise_for_status()
+        aj = ra.json()
+        feats = aj.get("features") or []
     except Exception:
-        pass
+        feats = []
+
+    alerts = []
+    max_alert_severity = "none"
+    has_weather_alert = False
+
+    sev_rank = {"none": 0, "minor": 1, "moderate": 2, "severe": 3, "extreme": 4}
+
+    for f in feats:
+        props = (f.get("properties") or {})
+        event = props.get("event")
+        severity = (props.get("severity") or "").lower()
+        effective = props.get("effective")
+        expires = props.get("expires")
+        headline = props.get("headline")
+        description = props.get("description")
+
+        alerts.append(
+            {
+                "event": event,
+                "severity": severity,
+                "effective": effective,
+                "expires": expires,
+                "headline": headline,
+                "description": description,
+            }
+        )
+        has_weather_alert = True
+        # Map NWS severity words to our banner values
+        mapped = "none"
+        if severity == "minor":
+            mapped = "minor"
+        elif severity in ("moderate", "unknown"):
+            mapped = "moderate"
+        elif severity == "severe":
+            mapped = "severe"
+        elif severity == "extreme":
+            mapped = "extreme"
+
+        if sev_rank[mapped] > sev_rank[max_alert_severity]:
+            max_alert_severity = mapped
 
     out["alerts"] = alerts
     out["has_weather_alert"] = has_weather_alert
@@ -507,7 +470,11 @@ def api_status(
     attempts = []
 
     # Run in parallel but NEVER allow the request to exceed CloudFront/origin timeouts.
-    with ThreadPoolExecutor(max_workers=2) as ex:
+    # IMPORTANT: do not use a context manager for ThreadPoolExecutor here.
+    # If a future times out, a context manager would wait for worker threads on exit,
+    # causing multi-minute hangs and CloudFront 504 HTML responses.
+    ex = ThreadPoolExecutor(max_workers=2)
+    try:
         f_weather = ex.submit(fetch_weather, lat, lon)
 
         if site_utility:
@@ -522,6 +489,10 @@ def api_status(
         try:
             weather = f_weather.result(timeout=WEATHER_TOTAL_BUDGET_S)
         except FuturesTimeout:
+            try:
+                f_weather.cancel()
+            except Exception:
+                pass
             weather = empty_weather(error="Weather lookup timed out")
         except Exception as e:
             weather = empty_weather(error=f"Weather lookup failed: {type(e).__name__}: {e}")
@@ -534,11 +505,21 @@ def api_status(
             else:
                 power_obj, attempts = f_power.result(timeout=POWER_TOTAL_BUDGET_S)
         except FuturesTimeout:
+            try:
+                f_power.cancel()
+            except Exception:
+                pass
             power_obj = empty_power(site_utility, "Power lookup timed out", ok=False)
             attempts = []
         except Exception as e:
             power_obj = empty_power(site_utility, f"Power lookup failed: {type(e).__name__}: {e}", ok=False)
             attempts = []
+    finally:
+        # Never block shutdown; timed-out provider threads may still be running.
+        try:
+            ex.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            ex.shutdown(wait=False)
 
     # Normalize power object to dict
     power_payload = power_obj.model_dump() if hasattr(power_obj, "model_dump") else power_obj
