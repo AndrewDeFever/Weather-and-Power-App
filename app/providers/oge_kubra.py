@@ -15,6 +15,7 @@ Kubra high-level:
 from __future__ import annotations
 
 import math
+import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -61,10 +62,16 @@ DEFAULT_MAX_ZOOM = 12
 DEFAULT_DRILL_NEIGHBOR_DEPTH = 1
 
 
+def _env_truthy(name: str) -> bool:
+    v = os.getenv(name, "").strip().lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+
 class OgeKubraClient:
     def __init__(self, debug: bool = False) -> None:
         self.session = requests.Session()
-        self.debug = debug
+        # allow env var override so we can turn on logging in Lambda without code rewires
+        self.debug = bool(debug) or _env_truthy("OGE_DEBUG")
 
         state = self._get_current_state()
         self.cluster_data_path = state["data"]["cluster_interval_generation_data"]
@@ -81,10 +88,10 @@ class OgeKubraClient:
         ) = self._autodiscover_tile_scheme()
 
         if self.debug:
-            print("AUTO-DISCOVERED SETTINGS")
-            print("  layer_name:", self.layer_name)
-            print("  entry_zoom:", self.entry_zoom)
-            print("  cluster_data_path:", self.cluster_data_path)
+            print("AUTO-DISCOVERED SETTINGS", flush=True)
+            print("  layer_name:", self.layer_name, flush=True)
+            print("  entry_zoom:", self.entry_zoom, flush=True)
+            print("  cluster_data_path:", self.cluster_data_path, flush=True)
 
     # -------------------------- PUBLIC --------------------------
 
@@ -129,8 +136,8 @@ class OgeKubraClient:
         base_q = mercantile.quadkey(base_tile)
 
         if self.debug:
-            print(f"Base tile: {base_tile}")
-            print(f"Base quadkey (z={self.entry_zoom}): {base_q}")
+            print(f"Base tile: {base_tile}", flush=True)
+            print(f"Base quadkey (z={self.entry_zoom}): {base_q}", flush=True)
 
         # 2) Initial quadkey neighborhood around site
         seeds = self._expand_quadkeys(base_q, depth=neighbor_depth)
@@ -171,7 +178,6 @@ class OgeKubraClient:
                 break
 
         # 4) Drill clusters (bounded)
-        # In fast mode, we keep drill shallow and bounded to avoid timeouts.
         while cluster_queue:
             if time_left() <= 0.5:
                 break
@@ -182,7 +188,6 @@ class OgeKubraClient:
 
             z, cluster_feat = cluster_queue.pop(0)
 
-            # If we're at max zoom, treat as leaf
             if z >= max_zoom:
                 add_leaf(cluster_feat)
                 if fast and len(outages_by_id) >= stop_after_leaf:
@@ -201,13 +206,15 @@ class OgeKubraClient:
             child_tile = mercantile.tile(clon, clat, child_z)
             child_q = mercantile.quadkey(child_tile)
 
-            # Fetch neighborhood around child tile to capture multiple outages
             child_keys = self._expand_quadkeys(child_q, depth=drill_neighbor_depth)
 
             cluster_drills += 1
 
             if self.debug:
-                print(f"DRILL cluster z={z} -> z={child_z}, center_q={child_q}, neighborhood={len(child_keys)} tiles")
+                print(
+                    f"DRILL cluster z={z} -> z={child_z}, center_q={child_q}, neighborhood={len(child_keys)} tiles",
+                    flush=True,
+                )
 
             for cq in child_keys:
                 if time_left() <= 0.5:
@@ -221,7 +228,6 @@ class OgeKubraClient:
 
                 for feat in raw_features:
                     if self._is_cluster(feat):
-                        # In fast mode, we still allow clusters but bounded by max_cluster_drills
                         cluster_queue.append((child_z, feat))
                     else:
                         add_leaf(feat)
@@ -245,15 +251,12 @@ class OgeKubraClient:
 
         enriched.sort(key=lambda x: x["distance_km"])
 
-        # 6) nearest within radius (do NOT throw; just filter)
         nearest = enriched[0] if enriched else None
         within = [o for o in enriched if o["distance_km"] <= max_radius_km]
 
-        # If the nearest is outside radius, nearest becomes None for "nearby"
         if nearest and nearest["distance_km"] > max_radius_km:
             nearest = None
 
-        # In fast mode, keep the list small to reduce payload and work
         if fast:
             within = within[:stop_after_leaf]
 
@@ -268,10 +271,6 @@ class OgeKubraClient:
         seen_urls: Set[str],
         seen_quadkeys: Set[Tuple[int, str]],
     ) -> Tuple[List[Dict[str, Any]], bool]:
-        """
-        Returns (features, did_fetch_bool).
-        did_fetch_bool indicates whether an HTTP request was actually made.
-        """
         key = (zoom, quadkey)
         if key in seen_quadkeys:
             return [], False
@@ -286,7 +285,7 @@ class OgeKubraClient:
         seen_urls.add(url)
 
         if self.debug:
-            print(f"FETCH z={zoom} q={quadkey} -> {url}")
+            print(f"FETCH z={zoom} q={quadkey} -> {url}", flush=True)
 
         try:
             r = self.session.get(url, timeout=TILE_TIMEOUT_S)
@@ -303,13 +302,12 @@ class OgeKubraClient:
 
         feats = tile.get("file_data", [])
         if self.debug:
-            print(f"  -> features: {len(feats)}")
+            print(f"  -> features: {len(feats)}", flush=True)
         return feats, True
 
     # -------------------------- DISCOVERY --------------------------
 
     def _autodiscover_tile_scheme(self):
-        # qkh strategies
         def qkh_last3_rev(q: str) -> str:
             return q[-3:][::-1]
 
@@ -325,7 +323,6 @@ class OgeKubraClient:
         def qkh_last4_rev(q: str) -> str:
             return q[-4:][::-1]
 
-        # Keep most likely first
         qkh_strats: List[Tuple[str, Callable[[str], str]]] = [
             ("last3_rev", qkh_last3_rev),
             ("last3", qkh_last3),
@@ -334,7 +331,6 @@ class OgeKubraClient:
             ("last4_rev", qkh_last4_rev),
         ]
 
-        # layouts
         def url_simple(base: str, layer: str, q: str) -> str:
             return f"{BASE_URL}{base}/public/{layer}/{q}.json"
 
@@ -352,9 +348,8 @@ class OgeKubraClient:
                 t = mercantile.tile(plon, plat, z)
                 probe_keys.append((mercantile.quadkey(t), z))
 
-        # Quick discovery budget: if it runs too long, fail fast (caller cache TTL prevents frequent hits)
         t0 = time.time()
-        DISCOVERY_BUDGET_S = 20
+        DISCOVERY_BUDGET_S = 20.0  # TEMP: gives us a clean discovery run for hardcoding
 
         for layer in self.cluster_layers:
             layer_id = layer["id"]
@@ -362,14 +357,14 @@ class OgeKubraClient:
                 for qkh_name, qkh_func in qkh_strats:
                     for layout_name, layout in layouts:
                         if (time.time() - t0) > DISCOVERY_BUDGET_S:
-                            raise RuntimeError("OG&E discovery exceeded time budget (6s).")
+                            raise RuntimeError(f"OG&E discovery exceeded time budget ({DISCOVERY_BUDGET_S:.0f}s).")
 
                         base = self.cluster_data_path.format(qkh=qkh_func(q))
                         url = layout(base, layer_id, q)
 
                         if self.debug:
-                            print(f"PROBE layer={layer_id} zoom={z} qkh={qkh_name} layout={layout_name}")
-                            print("  ", url)
+                            print(f"PROBE layer={layer_id} zoom={z} qkh={qkh_name} layout={layout_name}", flush=True)
+                            print("  ", url, flush=True)
 
                         try:
                             r = self.session.get(url, timeout=META_TIMEOUT_S)
@@ -385,8 +380,13 @@ class OgeKubraClient:
                             continue
 
                         if isinstance(js, dict) and "file_data" in js:
+                            # ALWAYS emit a single-line marker so we can hardcode the scheme.
+                            print(
+                                f"OGE_SCHEME_SUCCESS layer={layer_id} zoom={z} qkh={qkh_name} layout={layout_name} url={url}",
+                                flush=True,
+                            )
                             if self.debug:
-                                print("PROBE SUCCESS:", url)
+                                print("PROBE SUCCESS:", url, flush=True)
                             return layer_id, z, qkh_func, layout
 
         raise RuntimeError("Failed to auto-discover OG&E tile scheme.")
@@ -448,10 +448,6 @@ class OgeKubraClient:
     # -------------------------- QUADKEY HELPERS --------------------------
 
     def _expand_quadkeys(self, base_quadkey: str, depth: int) -> List[str]:
-        """
-        Deterministic neighborhood expansion around the base quadkey.
-        Avoids list(set(...)) which scrambles order and adds overhead.
-        """
         t = mercantile.quadkey_to_tile(base_quadkey)
         out: List[str] = []
         seen: Set[str] = set()
@@ -489,8 +485,6 @@ class OgeKubraClient:
         return [l for l in layers if str(l.get("type", "")).startswith("CLUSTER_LAYER")]
 
 
-# -------------------------- UTIL --------------------------
-
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0
     dlat = math.radians(lat2 - lat1)
@@ -508,24 +502,22 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 _CLIENT: Optional["OgeKubraClient"] = None
 _CLIENT_TS: float = 0.0
-
-# Increase TTL so discovery doesn't run frequently (it can be expensive).
 _CLIENT_TTL_S: int = 600  # 10 minutes
 
 
 def _get_client(debug: bool = False) -> "OgeKubraClient":
     global _CLIENT, _CLIENT_TS
     now = time.time()
+    debug_effective = bool(debug) or _env_truthy("OGE_DEBUG")
+
     if _CLIENT is None or (now - _CLIENT_TS) > _CLIENT_TTL_S:
-        _CLIENT = OgeKubraClient(debug=debug)
+        _CLIENT = OgeKubraClient(debug=debug_effective)
         _CLIENT_TS = now
     else:
-        if debug:
+        if debug_effective:
             _CLIENT.debug = True
     return _CLIENT
 
-
-# -------------------------- PUBLIC WRAPPER --------------------------
 
 def fetch_oge_outages(
     lat: float,
@@ -538,7 +530,6 @@ def fetch_oge_outages(
 ) -> Dict[str, Any]:
     """
     NOC default: fast=True (nearest-focused).
-    Keeps under router budget and avoids 15s edge timeouts.
     """
     client = _get_client(debug=debug)
     return client.fetch_outages_for_point(
@@ -556,18 +547,18 @@ def fetch_oge_outages(
     )
 
 
-# -------------------------- SELF TEST --------------------------
-
 if __name__ == "__main__":
     print("Testing OG&E outage fetch (debug on, fast mode)...")
+    os.environ["OGE_DEBUG"] = "1"
     try:
         res = fetch_oge_outages(
-            35.4676, -97.5164,
+            35.4676,
+            -97.5164,
             max_radius_km=50.0,
             max_zoom=12,
             neighbor_depth=1,
             drill_neighbor_depth=1,
-            debug=True
+            debug=True,
         )
         print("NEAREST:", res["nearest"])
         print("COUNT (within radius):", len(res["outages"]))
