@@ -1,30 +1,31 @@
 """
 OG&E KUBRA Storm Center outage integration
 
+HARD-CODED SCHEME (production-stable):
+- layer_name: cluster-1
+- entry_zoom: 11
+- qkh: last3_rev (quadkey[-3:][::-1])
+- layout: simple (..../public/<layer>/<quadkey>.json)
+
 FAST-PATH (NOC) MODE:
 - Prioritize "nearest outage" and a small set of leaf outages
 - Hard caps and time budgets to keep request under router/origin constraints
-- Auto-discovers tile scheme (layer, zoom, qkh sharding, layout) and caches client
 
 Kubra high-level:
 - currentState => cluster_interval_generation_data template (includes {qkh} sharding)
-- configuration => interval_generation_data CLUSTER_LAYER ids
 - tiles => file_data entries containing either clusters or leaf outage points
 """
 
 from __future__ import annotations
 
-import logging
 import math
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import mercantile
 import polyline
 import requests
-
-logger = logging.getLogger(__name__)
 
 # -------------------------- OG&E IDENTIFIERS --------------------------
 
@@ -32,12 +33,27 @@ BASE_URL = "https://kubra.io/"
 INSTANCE_ID = "dc85f79f-59f9-4e9e-9557-b3a9bee7e0ce"
 VIEW_ID = "8fe9d356-96bc-41f1-b353-6720eb408936"
 
+# -------------------------- HARD-CODED TILE SCHEME --------------------------
+
+LAYER_NAME = "cluster-1"
+ENTRY_ZOOM = 11
+
+
+def _qkh_last3_rev(quadkey: str) -> str:
+    return quadkey[-3:][::-1]
+
+
+def _url_simple(cluster_data_path: str, layer: str, quadkey: str) -> str:
+    # cluster_data_path already includes the sharded base (format-applied with qkh)
+    return f"{BASE_URL}{cluster_data_path}/public/{layer}/{quadkey}.json"
+
+
 # -------------------------- PERFORMANCE BUDGETS --------------------------
 # Keep provider work below router timeout so we can return cleanly.
 PROVIDER_TOTAL_BUDGET_S = 11.0
 
 # Per-request timeouts
-META_TIMEOUT_S = 4  # currentState/config
+META_TIMEOUT_S = 4  # currentState
 TILE_TIMEOUT_S = 3  # tile fetches
 
 # Fast-mode hard caps (tuned for "nearest only")
@@ -45,23 +61,10 @@ MAX_TILE_FETCHES = 80
 MAX_CLUSTER_DRILLS = 40
 STOP_AFTER_LEAF = 25  # stop collecting after this many leaf outages
 
-# -------------------------- PROBING CONSTANTS --------------------------
-# Reduce discovery work but keep multiple points so discovery doesn't fail when one area has no outages.
-PROBE_ZOOMS = [11, 12]
+# -------------------------- NEIGHBORHOOD / DRILLING --------------------------
 
-PROBE_POINTS = [
-    (35.4676, -97.5164),  # OKC
-    (36.1540, -95.9928),  # Tulsa-ish
-    (35.2226, -97.4395),  # Norman-ish
-]
-
-# initial neighborhood search around the site tile
 NEIGHBOR_DEPTH = 1
-
-# capped granularity (fast mode tends not to drill deep)
 DEFAULT_MAX_ZOOM = 12
-
-# when drilling into a cluster at higher zoom, fetch a neighborhood too
 DEFAULT_DRILL_NEIGHBOR_DEPTH = 1
 
 
@@ -73,30 +76,24 @@ def _env_truthy(name: str) -> bool:
 class OgeKubraClient:
     def __init__(self, debug: bool = False) -> None:
         self.session = requests.Session()
-        # allow env var override so we can turn on logging in Lambda without code rewires
         self.debug = bool(debug) or _env_truthy("OGE_DEBUG")
 
         state = self._get_current_state()
-        self.cluster_data_path = state["data"]["cluster_interval_generation_data"]
-        self.deployment_id = state["stormcenterDeploymentId"]
+        self.cluster_data_path_template = state["data"]["cluster_interval_generation_data"]
 
-        config = self._get_configuration()
-        self.cluster_layers = self._extract_cluster_layers(config)
-
-        (
-            self.layer_name,
-            self.entry_zoom,
-            self._qkh_func,
-            self._url_builder,
-        ) = self._autodiscover_tile_scheme()
+        # Apply hard-coded scheme
+        self.layer_name = LAYER_NAME
+        self.entry_zoom = ENTRY_ZOOM
+        self._qkh_func = _qkh_last3_rev
+        self._url_builder = _url_simple
 
         if self.debug:
-            print("AUTO-DISCOVERED SETTINGS", flush=True)
+            print("OGE HARD-CODED SCHEME ENABLED", flush=True)
             print("  layer_name:", self.layer_name, flush=True)
             print("  entry_zoom:", self.entry_zoom, flush=True)
-            print("  cluster_data_path:", self.cluster_data_path, flush=True)
-
-    # -------------------------- PUBLIC --------------------------
+            print("  qkh:", "last3_rev", flush=True)
+            print("  layout:", "simple", flush=True)
+            print("  cluster_data_path_template:", self.cluster_data_path_template, flush=True)
 
     def fetch_outages_for_point(
         self,
@@ -113,19 +110,6 @@ class OgeKubraClient:
         max_cluster_drills: int = MAX_CLUSTER_DRILLS,
         time_budget_s: float = PROVIDER_TOTAL_BUDGET_S,
     ) -> Dict[str, Any]:
-        """
-        Returns:
-          {
-            "nearest": <nearest outage dict>,
-            "outages": [<outage dict>, ...]   # sorted by distance
-          }
-
-        FAST MODE:
-          - Stop once we have enough leaf outages (stop_after_leaf)
-          - Hard caps on tile fetches and cluster drills
-          - Internal time budget to avoid router timeout
-        """
-
         if max_zoom < self.entry_zoom:
             raise ValueError(f"max_zoom ({max_zoom}) must be >= entry_zoom ({self.entry_zoom}).")
 
@@ -134,7 +118,6 @@ class OgeKubraClient:
         def time_left() -> float:
             return time_budget_s - (time.time() - t0)
 
-        # 1) Base quadkey at entry zoom
         base_tile = mercantile.tile(lon, lat, self.entry_zoom)
         base_q = mercantile.quadkey(base_tile)
 
@@ -142,7 +125,6 @@ class OgeKubraClient:
             print(f"Base tile: {base_tile}", flush=True)
             print(f"Base quadkey (z={self.entry_zoom}): {base_q}", flush=True)
 
-        # 2) Initial quadkey neighborhood around site
         seeds = self._expand_quadkeys(base_q, depth=neighbor_depth)
 
         outages_by_id: Dict[str, Dict[str, Any]] = {}
@@ -151,8 +133,6 @@ class OgeKubraClient:
 
         tile_fetches = 0
         cluster_drills = 0
-
-        # 3) Crawl: seed tiles + drill clusters
         cluster_queue: List[Tuple[int, Dict[str, Any]]] = []  # (zoom, raw feature)
 
         def add_leaf(feat: Dict[str, Any]) -> None:
@@ -180,7 +160,7 @@ class OgeKubraClient:
             if fast and len(outages_by_id) >= stop_after_leaf:
                 break
 
-        # 4) Drill clusters (bounded)
+        # Drill clusters (bounded)
         while cluster_queue:
             if time_left() <= 0.5:
                 break
@@ -210,7 +190,6 @@ class OgeKubraClient:
             child_q = mercantile.quadkey(child_tile)
 
             child_keys = self._expand_quadkeys(child_q, depth=drill_neighbor_depth)
-
             cluster_drills += 1
 
             if self.debug:
@@ -244,7 +223,7 @@ class OgeKubraClient:
         if not outages_by_id:
             return {"nearest": None, "outages": []}
 
-        # 5) Attach distance and sort
+        # Attach distance and sort
         enriched: List[Dict[str, Any]] = []
         for o in outages_by_id.values():
             d = haversine_km(lat, lon, o["latitude"], o["longitude"])
@@ -265,8 +244,6 @@ class OgeKubraClient:
 
         return {"nearest": nearest, "outages": within}
 
-    # -------------------------- TILE FETCH --------------------------
-
     def _fetch_tile_features(
         self,
         quadkey: str,
@@ -280,8 +257,8 @@ class OgeKubraClient:
         seen_quadkeys.add(key)
 
         qkh = self._qkh_func(quadkey)
-        base = self.cluster_data_path.format(qkh=qkh)
-        url = self._url_builder(base, self.layer_name, quadkey)
+        cluster_data_path = self.cluster_data_path_template.format(qkh=qkh)
+        url = self._url_builder(cluster_data_path, self.layer_name, quadkey)
 
         if url in seen_urls:
             return [], False
@@ -307,98 +284,6 @@ class OgeKubraClient:
         if self.debug:
             print(f"  -> features: {len(feats)}", flush=True)
         return feats, True
-
-    # -------------------------- DISCOVERY --------------------------
-
-    def _autodiscover_tile_scheme(self):
-        def qkh_last3_rev(q: str) -> str:
-            return q[-3:][::-1]
-
-        def qkh_last3(q: str) -> str:
-            return q[-3:]
-
-        def qkh_first3(q: str) -> str:
-            return q[:3]
-
-        def qkh_first3_rev(q: str) -> str:
-            return q[:3][::-1]
-
-        def qkh_last4_rev(q: str) -> str:
-            return q[-4:][::-1]
-
-        qkh_strats: List[Tuple[str, Callable[[str], str]]] = [
-            ("last3_rev", qkh_last3_rev),
-            ("last3", qkh_last3),
-            ("first3", qkh_first3),
-            ("first3_rev", qkh_first3_rev),
-            ("last4_rev", qkh_last4_rev),
-        ]
-
-        def url_simple(base: str, layer: str, q: str) -> str:
-            return f"{BASE_URL}{base}/public/{layer}/{q}.json"
-
-        def url_prefix2(base: str, layer: str, q: str) -> str:
-            return f"{BASE_URL}{base}/public/{layer}/{q[:2]}/{q}.json"
-
-        layouts: List[Tuple[str, Callable[[str, str, str], str]]] = [
-            ("simple", url_simple),
-            ("prefix2", url_prefix2),
-        ]
-
-        probe_keys: List[Tuple[str, int]] = []
-        for plat, plon in PROBE_POINTS:
-            for z in PROBE_ZOOMS:
-                t = mercantile.tile(plon, plat, z)
-                probe_keys.append((mercantile.quadkey(t), z))
-
-        t0 = time.time()
-        DISCOVERY_BUDGET_S = 20.0  # TEMP: gives us a clean discovery run for hardcoding
-
-        for layer in self.cluster_layers:
-            layer_id = layer["id"]
-            for q, z in probe_keys:
-                for qkh_name, qkh_func in qkh_strats:
-                    for layout_name, layout in layouts:
-                        if (time.time() - t0) > DISCOVERY_BUDGET_S:
-                            raise RuntimeError(f"OG&E discovery exceeded time budget ({DISCOVERY_BUDGET_S:.0f}s).")
-
-                        base = self.cluster_data_path.format(qkh=qkh_func(q))
-                        url = layout(base, layer_id, q)
-
-                        if self.debug:
-                            print(f"PROBE layer={layer_id} zoom={z} qkh={qkh_name} layout={layout_name}", flush=True)
-                            print("  ", url, flush=True)
-
-                        try:
-                            r = self.session.get(url, timeout=META_TIMEOUT_S)
-                        except requests.RequestException:
-                            continue
-
-                        if r.status_code != 200:
-                            continue
-
-                        try:
-                            js = r.json()
-                        except ValueError:
-                            continue
-
-                        if isinstance(js, dict) and "file_data" in js:
-                            # Emit a single-line marker via logging so it reliably shows in CloudWatch.
-                            logger.warning(
-                                "OGE_SCHEME_SUCCESS layer=%s zoom=%s qkh=%s layout=%s url=%s",
-                                layer_id,
-                                z,
-                                qkh_name,
-                                layout_name,
-                                url,
-                            )
-                            if self.debug:
-                                print("PROBE SUCCESS:", url, flush=True)
-                            return layer_id, z, qkh_func, layout
-
-        raise RuntimeError("Failed to auto-discover OG&E tile scheme.")
-
-    # -------------------------- NORMALIZATION / GEOMETRY --------------------------
 
     @staticmethod
     def _is_cluster(feature: Dict[str, Any]) -> bool:
@@ -452,8 +337,6 @@ class OgeKubraClient:
             "longitude": lon,
         }
 
-    # -------------------------- QUADKEY HELPERS --------------------------
-
     def _expand_quadkeys(self, base_quadkey: str, depth: int) -> List[str]:
         t = mercantile.quadkey_to_tile(base_quadkey)
         out: List[str] = []
@@ -466,8 +349,6 @@ class OgeKubraClient:
                     out.append(q)
         return out
 
-    # -------------------------- METADATA --------------------------
-
     def _get_current_state(self) -> Dict[str, Any]:
         url = (
             f"{BASE_URL}stormcenter/api/v1/stormcenters/"
@@ -477,20 +358,8 @@ class OgeKubraClient:
         r.raise_for_status()
         return r.json()
 
-    def _get_configuration(self) -> Dict[str, Any]:
-        url = (
-            f"{BASE_URL}stormcenter/api/v1/stormcenters/"
-            f"{INSTANCE_ID}/views/{VIEW_ID}/configuration/{self.deployment_id}?preview=false"
-        )
-        r = self.session.get(url, timeout=META_TIMEOUT_S)
-        r.raise_for_status()
-        return r.json()
 
-    @staticmethod
-    def _extract_cluster_layers(config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        layers = config["config"]["layers"]["data"]["interval_generation_data"]
-        return [l for l in layers if str(l.get("type", "")).startswith("CLUSTER_LAYER")]
-
+# -------------------------- UTIL --------------------------
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0
