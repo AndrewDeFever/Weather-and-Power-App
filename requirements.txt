@@ -6,6 +6,3 @@ requests
 mercantile
 polyline
 uvicorn
-httpx
-pytest
-ruff
