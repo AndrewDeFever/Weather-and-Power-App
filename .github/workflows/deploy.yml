@@ -54,7 +54,7 @@ jobs:
 
       - name: "Run tests"
         run: |
-          pytest -q tests
+          PYTHONPATH=. pytest -q tests
 
       - name: "Install AWS SAM CLI"
         uses: aws-actions/setup-sam@v2
