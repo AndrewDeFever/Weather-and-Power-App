@@ -43,8 +43,8 @@ import json
 import math
 import re
 import time
-from datetime import datetime, timezone
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import requests
@@ -52,6 +52,7 @@ import requests
 # -----------------------------
 # Exceptions
 # -----------------------------
+
 
 class EvergyKubraError(RuntimeError):
     """Controlled error the router can catch."""
@@ -88,27 +89,34 @@ _EVERGY_CACHE = {
     "ts": 0.0,
 }
 
+
 def _cache_get(key: str):
     now = time.time()
     if now - float(_EVERGY_CACHE.get("ts", 0.0)) > CACHE_TTL_SECONDS:
         return None
     return _EVERGY_CACHE.get(key)
 
+
 def _cache_set(**kwargs):
     _EVERGY_CACHE.update(kwargs)
     _EVERGY_CACHE["ts"] = time.time()
-REQUEST_TIMEOUT = (3.0, 5.0)  # (connect, read) seconds per HTTP call
-TOTAL_BUDGET_SECONDS = 12.0      # overall provider budget to fit router 15s
+
+
+REQUEST_TIMEOUT = (3.0, 5.0)   # (connect, read) seconds per HTTP call
+TOTAL_BUDGET_SECONDS = 12.0    # overall provider budget to fit router 15s
+
 
 def _session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({
-        "User-Agent": UA,
-        "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-    })
+    s.headers.update(
+        {
+            "User-Agent": UA,
+            "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
+    )
     return s
 
 
@@ -132,11 +140,14 @@ def _get_json(s: requests.Session, url: str, debug: bool = False) -> Any:
 # Quadkey + geo utils
 # -----------------------------
 
+
 def _clip(n: float, lo: float, hi: float) -> float:
     return min(max(n, lo), hi)
 
+
 def _map_size(zoom: int) -> int:
     return 256 << zoom
+
 
 def _latlon_to_pixel_xy(lat: float, lon: float, zoom: int) -> Tuple[int, int]:
     lat = _clip(lat, -85.05112878, 85.05112878)
@@ -151,8 +162,10 @@ def _latlon_to_pixel_xy(lat: float, lon: float, zoom: int) -> Tuple[int, int]:
     py = int(_clip(y * size + 0.5, 0, size - 1))
     return px, py
 
+
 def _pixel_xy_to_tile_xy(px: int, py: int) -> Tuple[int, int]:
     return px // 256, py // 256
+
 
 def _tile_xy_to_quadkey(tx: int, ty: int, zoom: int) -> str:
     q = []
@@ -166,10 +179,12 @@ def _tile_xy_to_quadkey(tx: int, ty: int, zoom: int) -> str:
         q.append(str(digit))
     return "".join(q)
 
+
 def latlon_to_quadkey(lat: float, lon: float, zoom: int) -> str:
     px, py = _latlon_to_pixel_xy(lat, lon, zoom)
     tx, ty = _pixel_xy_to_tile_xy(px, py)
     return _tile_xy_to_quadkey(tx, ty, zoom)
+
 
 def quadkey_to_tile_xy(qk: str) -> Tuple[int, int]:
     tx = 0
@@ -185,8 +200,10 @@ def quadkey_to_tile_xy(qk: str) -> Tuple[int, int]:
             ty |= mask
     return tx, ty
 
+
 def quadkey_children(qk: str) -> List[str]:
     return [qk + d for d in ("0", "1", "2", "3")]
+
 
 def quadkey_neighbors(qk: str, depth: int = 1) -> Set[str]:
     if depth <= 0:
@@ -198,6 +215,7 @@ def quadkey_neighbors(qk: str, depth: int = 1) -> Set[str]:
         for dy in range(-depth, depth + 1):
             out.add(_tile_xy_to_quadkey(tx + dx, ty + dy, z))
     return out
+
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     r = 6371.0
@@ -213,6 +231,7 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 # Polyline decoding (Evergy geom.p)
 # -----------------------------
 
+
 def decode_polyline(encoded: str, precision: int = 5) -> List[Tuple[float, float]]:
     """
     Decodes a Google-encoded polyline string into (lat, lon) pairs.
@@ -224,7 +243,7 @@ def decode_polyline(encoded: str, precision: int = 5) -> List[Tuple[float, float
     lat = 0
     lon = 0
     coords: List[Tuple[float, float]] = []
-    factor = 10 ** precision
+    factor = 10**precision
 
     while idx < len(encoded):
         # latitude
@@ -266,10 +285,12 @@ def decode_polyline(encoded: str, precision: int = 5) -> List[Tuple[float, float
 # Generic helpers
 # -----------------------------
 
+
 def _safe_str(v: Any) -> Optional[str]:
     if v is None:
         return None
     return v if isinstance(v, str) else str(v)
+
 
 def normalize_iso8601(ts: Optional[str]) -> Optional[str]:
     """Normalize timestamps to ISO-8601 with seconds (UTC, Z suffix).
@@ -285,7 +306,6 @@ def normalize_iso8601(ts: Optional[str]) -> Optional[str]:
     if ts.startswith("ETR-"):
         return ts
     try:
-        # Strip trailing Z then parse; treat naive as UTC.
         raw = ts[:-1] if ts.endswith("Z") else ts
         dt = datetime.fromisoformat(raw)
         if dt.tzinfo is None:
@@ -295,6 +315,7 @@ def normalize_iso8601(ts: Optional[str]) -> Optional[str]:
         return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
         return ts
+
 
 def _localize_maybe(v: Any) -> Optional[str]:
     if v is None:
@@ -310,6 +331,7 @@ def _localize_maybe(v: Any) -> Optional[str]:
             if isinstance(vv, str):
                 return vv
     return _safe_str(v)
+
 
 def _nested_get(d: Dict[str, Any], path: Sequence[str]) -> Any:
     cur: Any = d
@@ -329,7 +351,6 @@ DEFAULT_HOST_CANDIDATES = [
     "https://outagemap.evergy.com",
 ]
 
-
 # Known-good Evergy StormCenter IDs (fallback when HTML/JS discovery fails)
 DEFAULT_STORMCENTER_ID = "b1493825-4ee3-4706-a986-99a763a733db"
 DEFAULT_VIEW_ID = "c1062d22-2919-487c-9000-e21b72b62278"
@@ -338,6 +359,7 @@ _STORMCENTER_VIEW_RE = re.compile(
     r"/stormcenter/api/v1/stormcenters/([0-9a-fA-F-]{36})/views/([0-9a-fA-F-]{36})/currentState",
     re.IGNORECASE,
 )
+
 
 def discover_stormcenter_and_view(debug: bool = False) -> Tuple[str, str]:
     """
@@ -348,7 +370,9 @@ def discover_stormcenter_and_view(debug: bool = False) -> Tuple[str, str]:
     """
     last_err: Optional[Exception] = None
 
-    s = requests.Session()
+    # IMPORTANT: Use the same session helper as the rest of the module.
+    # This guarantees `s` is defined and has headers + timeouts.
+    s = _session()
     try:
         for host in DEFAULT_HOST_CANDIDATES:
             for path in ("/", "/outages", "/outage-map"):
@@ -365,9 +389,14 @@ def discover_stormcenter_and_view(debug: bool = False) -> Tuple[str, str]:
                         print(f"DISCOVERED IDs via {url}")
                     return m.group(1), m.group(2)
 
-                script_srcs = re.findall(r'<script[^>]+src="([^"]+)"', html, flags=re.IGNORECASE)
-                # prioritize bundle-like scripts first
-                bundle_like = [src for src in script_srcs if any(k in src.lower() for k in ("main", "bundle", "app", "runtime"))]
+                script_srcs = re.findall(
+                    r'<script[^>]+src="([^"]+)"', html, flags=re.IGNORECASE
+                )
+                bundle_like = [
+                    src
+                    for src in script_srcs
+                    if any(k in src.lower() for k in ("main", "bundle", "app", "runtime"))
+                ]
                 for src in (bundle_like + script_srcs)[:6]:
                     js_url = src
                     if js_url.startswith("/"):
@@ -389,14 +418,19 @@ def discover_stormcenter_and_view(debug: bool = False) -> Tuple[str, str]:
                             print(f"DISCOVERED IDs via JS {js_url}")
                         return m2.group(1), m2.group(2)
 
-        raise EvergyKubraError(f"Unable to discover stormcenter/view IDs. Last error: {last_err}")
+        raise EvergyKubraError(
+            f"Unable to discover stormcenter/view IDs. Last error: {last_err}"
+        )
     finally:
         try:
             s.close()
         except Exception:
             pass
 
-def fetch_current_state(s: requests.Session, stormcenter_id: str, view_id: str, debug: bool = False) -> Dict[str, Any]:
+
+def fetch_current_state(
+    s: requests.Session, stormcenter_id: str, view_id: str, debug: bool = False
+) -> Dict[str, Any]:
     url = (
         f"https://kubra.io/stormcenter/api/v1/stormcenters/{stormcenter_id}"
         f"/views/{view_id}/currentState?preview=false"
@@ -411,14 +445,18 @@ def extract_cluster_template(current_state: Dict[str, Any]) -> str:
     """
     Evergy confirmed location: current_state['data']['cluster_interval_generation_data']
     """
-    template = _nested_get(current_state, ["data", "cluster_interval_generation_data"]) or current_state.get("cluster_interval_generation_data")
+    template = _nested_get(
+        current_state, ["data", "cluster_interval_generation_data"]
+    ) or current_state.get("cluster_interval_generation_data")
     if not template or not isinstance(template, str):
         blob = json.dumps(current_state)
         m = re.search(r"cluster-data/[^\"']+", blob)
         if m:
             template = m.group(0)
         else:
-            raise EvergyKubraError("Unable to extract cluster_interval_generation_data template from currentState")
+            raise EvergyKubraError(
+                "Unable to extract cluster_interval_generation_data template from currentState"
+            )
     return template.strip("/")
 
 
@@ -426,9 +464,11 @@ def extract_cluster_template(current_state: Dict[str, Any]) -> str:
 # qkh + URL building
 # -----------------------------
 
+
 def _qkh_last3_rev(qk: str) -> str:
     last3 = qk[-3:] if len(qk) >= 3 else qk
     return last3[::-1]
+
 
 def build_tile_url(cluster_template: str, qk: str, layer: str, layout: str) -> str:
     """
@@ -436,7 +476,11 @@ def build_tile_url(cluster_template: str, qk: str, layer: str, layout: str) -> s
     Support both {qkh} and (qkh) placeholders for portability.
     """
     shard = _qkh_last3_rev(qk)
-    base = cluster_template.replace("{qkh}", shard).replace("(qkh)", shard).strip("/")
+    base = (
+        cluster_template.replace("{qkh}", shard)
+        .replace("(qkh)", shard)
+        .strip("/")
+    )
     if layout == "flat":
         return f"https://kubra.io/{base}/public/{layer}/{qk}.json"
     if layout == "split2":
@@ -461,8 +505,8 @@ def discover_tile_scheme(
     cluster_template: str,
     qks_to_try: Sequence[str],
     zoom: int,
-    debug: bool = False
-    ) -> TileScheme:
+    debug: bool = False,
+) -> TileScheme:
     """
     Evergy deployment config for outage layers is protected (401),
     so auto-discover by validated probing.
@@ -486,7 +530,10 @@ def discover_tile_scheme(
             for layout in layouts:
                 url = build_tile_url(cluster_template, qk, layer, layout)
                 if debug:
-                    print(f"PROBE layer={layer} zoom={zoom} qkh=last3_rev layout={layout} qk={qk}")
+                    print(
+                        f"PROBE layer={layer} zoom={zoom} qkh=last3_rev "
+                        f"layout={layout} qk={qk}"
+                    )
                     print(f"   {url}")
                 try:
                     r = s.get(url, timeout=REQUEST_TIMEOUT)
@@ -501,7 +548,11 @@ def discover_tile_scheme(
                 except Exception:
                     continue
 
-    raise EvergyKubraError(f"Unable to discover a working tile scheme (last HTTP status: {last_status})")
+    raise EvergyKubraError(
+        f"Unable to discover a working tile scheme (last HTTP status: {last_status})"
+    )
+
+
 def _decode_geom_point(geom: Any) -> Tuple[Optional[float], Optional[float]]:
     if not isinstance(geom, dict):
         return None, None
@@ -542,13 +593,9 @@ def _normalize_record(rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     start_time = normalize_iso8601(_safe_str(desc.get("start_time")))
 
-
     # Evergy: incident IDs are not always assigned/published.
     # Policy for NOC: Only show a true Evergy/Kubra incident ID when provided; otherwise mark Unknown.
-    if inc_id:
-        outage_id = str(inc_id)
-    else:
-        outage_id = "Unknown"
+    outage_id = str(inc_id) if inc_id else "Unknown"
 
     return {
         "id": outage_id,
@@ -572,8 +619,8 @@ def fetch_tile_records(
     cluster_template: str,
     scheme: TileScheme,
     qk: str,
-    debug: bool = False
-    ) -> List[Dict[str, Any]]:
+    debug: bool = False,
+) -> List[Dict[str, Any]]:
     url = build_tile_url(cluster_template, qk, scheme.layer, scheme.layout)
     if debug:
         print(f"FETCH {url}")
@@ -603,6 +650,7 @@ def fetch_tile_records(
 # Main entrypoint
 # -----------------------------
 
+
 def fetch_evergy_outages(
     lat: float,
     lon: float,
@@ -625,7 +673,6 @@ def fetch_evergy_outages(
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         raise EvergyKubraError("Invalid lat/lon")
 
-
     # Single session per invocation (reduces handshake overhead) + hard runtime budget.
     s = _session()
     t0 = time.time()
@@ -633,198 +680,194 @@ def fetch_evergy_outages(
     def _time_left() -> float:
         return TOTAL_BUDGET_SECONDS - (time.time() - t0)
 
-    # 1) Discover IDs unless provided (Option A), with a hard fallback (Option B)
-    cached_ids = _cache_get("ids")
-    if (not stormcenter_id or not view_id) and cached_ids:
-        stormcenter_id, view_id = cached_ids
-    if not stormcenter_id or not view_id:
-        try:
-            stormcenter_id, view_id = discover_stormcenter_and_view(debug=debug)
-        except EvergyKubraError as e:
-            # Operational fallback: use known IDs if discovery fails in this environment
-            if debug:
-                print(f"DISCOVERY FAILED: {e}")
-                print("FALLBACK to DEFAULT_STORMCENTER_ID/DEFAULT_VIEW_ID")
-            stormcenter_id, view_id = DEFAULT_STORMCENTER_ID, DEFAULT_VIEW_ID
-            if not stormcenter_id or not view_id:
-                # Defaults are configured; if discovery fails we always use them.
-                pass
-    _cache_set(ids=(stormcenter_id, view_id))
-    if debug:
-        print(f"stormcenter={stormcenter_id} view={view_id}")
+    try:
+        # 1) Discover IDs unless provided (Option A), with a hard fallback (Option B)
+        cached_ids = _cache_get("ids")
+        if (not stormcenter_id or not view_id) and cached_ids:
+            stormcenter_id, view_id = cached_ids
+        if not stormcenter_id or not view_id:
+            try:
+                stormcenter_id, view_id = discover_stormcenter_and_view(debug=debug)
+            except EvergyKubraError as e:
+                # Operational fallback: use known IDs if discovery fails in this environment
+                if debug:
+                    print(f"DISCOVERY FAILED: {e}")
+                    print("FALLBACK to DEFAULT_STORMCENTER_ID/DEFAULT_VIEW_ID")
+                stormcenter_id, view_id = DEFAULT_STORMCENTER_ID, DEFAULT_VIEW_ID
 
-    # 2) currentState -> cluster template (instance + generation included)
-    cs = fetch_current_state(s, stormcenter_id, view_id, debug=debug)
-    cluster_template = extract_cluster_template(cs)
-    _cache_set(cluster_template=cluster_template)
-    if debug:
-        print(f"cluster_template={cluster_template}")
+        _cache_set(ids=(stormcenter_id, view_id))
+        if debug:
+            print(f"stormcenter={stormcenter_id} view={view_id}")
 
-    # 3) Select an entry zoom and discover tile scheme (layer + layout)
-    zoom_candidates = [10, 11, 12, 13, 14]
-    scheme: Optional[TileScheme] = None
-    last_err: Optional[Exception] = None
+        # 2) currentState -> cluster template (instance + generation included)
+        cs = fetch_current_state(s, stormcenter_id, view_id, debug=debug)
+        cluster_template = extract_cluster_template(cs)
+        _cache_set(cluster_template=cluster_template)
+        if debug:
+            print(f"cluster_template={cluster_template}")
 
-    for z in zoom_candidates:
-        if _time_left() <= 1.0:
-            raise EvergyKubraError("Timeout after 15s")
-        center_qk = latlon_to_quadkey(lat, lon, z)
-        # Probe a small neighborhood; Evergy tiles may 404 when a specific tile has no outages.
-        qks_to_try = sorted(list(quadkey_neighbors(center_qk, depth=max(1, neighbor_depth))))
-        # If the site area is quiet, also probe a few known Evergy territory points to learn the scheme.
-        territory_points = [
-            (38.9822, -94.6708),  # KC / Overland Park
-            (39.0558, -95.6890),  # Topeka
-            (37.6872, -97.3301),  # Wichita
-        ]
-        for tlat, tlon in territory_points:
-            qks_to_try.append(latlon_to_quadkey(tlat, tlon, z))
-        # De-dupe while preserving order
-        seen = set()
-        qks_to_try = [q for q in qks_to_try if not (q in seen or seen.add(q))]
-        cached_scheme = _cache_get("scheme")
-        if cached_scheme:
-            scheme = cached_scheme
-            break
-        try:
-            scheme = discover_tile_scheme(s, cluster_template, qks_to_try, z, debug=debug)
-            _cache_set(scheme=scheme)
-            break
-        except Exception as e:
-            last_err = e
-            continue
+        # 3) Select an entry zoom and discover tile scheme (layer + layout)
+        zoom_candidates = [10, 11, 12, 13, 14]
+        scheme: Optional[TileScheme] = None
+        last_err: Optional[Exception] = None
 
-    if not scheme:
-        raise EvergyKubraError(f"Failed to discover tile scheme. Last error: {last_err}")
+        for z in zoom_candidates:
+            if _time_left() <= 1.0:
+                raise EvergyKubraError("Timeout after 12s")
+            center_qk = latlon_to_quadkey(lat, lon, z)
 
-    entry_zoom = scheme.zoom
-    center_qk = latlon_to_quadkey(lat, lon, entry_zoom)
+            qks_to_try = sorted(list(quadkey_neighbors(center_qk, depth=max(1, neighbor_depth))))
 
-    if debug:
-        print(f"ENTRY zoom={entry_zoom} qk={center_qk}")
-        print(f"USING layer={scheme.layer} layout={scheme.layout}")
+            territory_points = [
+                (38.9822, -94.6708),  # KC / Overland Park
+                (39.0558, -95.6890),  # Topeka
+                (37.6872, -97.3301),  # Wichita
+            ]
+            for tlat, tlon in territory_points:
+                qks_to_try.append(latlon_to_quadkey(tlat, tlon, z))
 
-    # 4) Fetch entry neighborhood
-    visited_tiles: Set[str] = set()
-    queue_tiles: List[str] = sorted(list(quadkey_neighbors(center_qk, depth=neighbor_depth)))
+            # De-dupe while preserving order
+            seen: Set[str] = set()
+            qks_to_try = [q for q in qks_to_try if not (q in seen or seen.add(q))]
 
-    all_outs: List[Dict[str, Any]] = []
-    drill_queue: List[Tuple[float, float, int]] = []  # clusters to drill; not returned
-    for qk in queue_tiles:
-        if _time_left() <= 1.0:
-            break
-        if qk in visited_tiles:
-            continue
-        visited_tiles.add(qk)
-        new_outs = fetch_tile_records(s, cluster_template, scheme, qk, debug=debug)
-        for o in new_outs:
-            if o.get('cluster') is True:
-                # Use cluster rows only as drill navigation, do not return them.
-                drill_queue.append((o['latitude'], o['longitude'], entry_zoom))
-            else:
-                all_outs.append(o)
+            cached_scheme = _cache_get("scheme")
+            if cached_scheme:
+                scheme = cached_scheme
+                break
 
-    # 5) Drill clusters down to max_zoom
+            try:
+                scheme = discover_tile_scheme(s, cluster_template, qks_to_try, z, debug=debug)
+                _cache_set(scheme=scheme)
+                break
+            except Exception as e:
+                last_err = e
+                continue
 
-    drill_ops = 0
-    drill_cap = 120
-    drilled_tile_keys: Set[Tuple[int, str]] = set()  # (zoom, quadkey) to avoid repeats
+        if not scheme:
+            raise EvergyKubraError(f"Failed to discover tile scheme. Last error: {last_err}")
 
-    while drill_queue:
-        if _time_left() <= 1.0:
-            if debug:
-                print("TIME BUDGET LOW; stopping drill.")
-            break
-        clat, clon, z = drill_queue.pop(0)
-        if z >= max_zoom:
-            continue
-        if drill_ops >= drill_cap:
-            if debug:
-                print("DRILL CAP reached; stopping.")
-            break
-        drill_ops += 1
-
-        qk_cluster = latlon_to_quadkey(clat, clon, z)
-        next_z = z + 1
-
-        tiles_next: Set[str] = set()
-        for child in quadkey_children(qk_cluster):
-            tiles_next |= quadkey_neighbors(child, drill_neighbor_depth)
+        entry_zoom = scheme.zoom
+        center_qk = latlon_to_quadkey(lat, lon, entry_zoom)
 
         if debug:
-            print(f"DRILL cluster z={z} -> z={next_z} tiles={len(tiles_next)}")
+            print(f"ENTRY zoom={entry_zoom} qk={center_qk}")
+            print(f"USING layer={scheme.layer} layout={scheme.layout}")
 
-        for tqk in tiles_next:
-            key = (next_z, tqk)
-            if key in drilled_tile_keys:
+        # 4) Fetch entry neighborhood
+        visited_tiles: Set[str] = set()
+        queue_tiles: List[str] = sorted(list(quadkey_neighbors(center_qk, depth=neighbor_depth)))
+
+        all_outs: List[Dict[str, Any]] = []
+        drill_queue: List[Tuple[float, float, int]] = []  # clusters to drill; not returned
+
+        for qk in queue_tiles:
+            if _time_left() <= 1.0:
+                break
+            if qk in visited_tiles:
                 continue
-            drilled_tile_keys.add(key)
+            visited_tiles.add(qk)
 
-            new_outs = fetch_tile_records(s, cluster_template, scheme, tqk, debug=debug)
+            new_outs = fetch_tile_records(s, cluster_template, scheme, qk, debug=debug)
             for o in new_outs:
-                if o.get('cluster') is True:
-                    # cluster summaries are navigation only; drill further if allowed
-                    if next_z < max_zoom:
-                        drill_queue.append((o['latitude'], o['longitude'], next_z))
+                if o.get("cluster") is True:
+                    drill_queue.append((o["latitude"], o["longitude"], entry_zoom))
                 else:
                     all_outs.append(o)
 
-    # 6) Distance filter + dedupe
+        # 5) Drill clusters down to max_zoom
+        drill_ops = 0
+        drill_cap = 120
+        drilled_tile_keys: Set[Tuple[int, str]] = set()  # (zoom, quadkey) to avoid repeats
 
-    # -----------------------------
-    # Distance + radius policy (Evergy)
-    # -----------------------------
-    # NOC default: 10 miles first, then fall back to 25 miles if nothing is found.
-    # Respect caller-provided max_radius_km as an upper bound.
-    primary_radius_km = min(PRIMARY_RADIUS_KM, float(max_radius_km))
-    fallback_radius_km = min(FALLBACK_RADIUS_KM, float(max_radius_km))
-
-    def _filter_and_dedup(radius_km: float) -> List[Dict[str, Any]]:
-        dedup: Set[str] = set()
-        final_outs: List[Dict[str, Any]] = []
-        for o in all_outs:
-            dist = haversine_km(lat, lon, o["latitude"], o["longitude"])
-            o["distance_km"] = dist
-
-            if dist > radius_km:
+        while drill_queue:
+            if _time_left() <= 1.0:
+                if debug:
+                    print("TIME BUDGET LOW; stopping drill.")
+                break
+            clat, clon, z = drill_queue.pop(0)
+            if z >= max_zoom:
                 continue
+            if drill_ops >= drill_cap:
+                if debug:
+                    print("DRILL CAP reached; stopping.")
+                break
+            drill_ops += 1
 
-            # Dedup key:
-            # - clusters: avoid duplicate cluster summaries at same centroid
-            # - non-clusters: use outage id (may be "Unknown" for Evergy)
-            if o.get("cluster") is True:
-                dkey = f"cluster:{o['latitude']:.6f},{o['longitude']:.6f}:{o.get('n_out')}:{o.get('customers_out')}"
-            else:
-                dkey = f"inc:{o.get('id')}:{o['latitude']:.6f},{o['longitude']:.6f}:{o.get('start_time')}"
+            qk_cluster = latlon_to_quadkey(clat, clon, z)
+            next_z = z + 1
 
-            if dkey in dedup:
-                continue
-            dedup.add(dkey)
-            final_outs.append(o)
-        return final_outs
+            tiles_next: Set[str] = set()
+            for child in quadkey_children(qk_cluster):
+                tiles_next |= quadkey_neighbors(child, drill_neighbor_depth)
 
-    # Pass 1: primary radius
-    final_outs = _filter_and_dedup(primary_radius_km)
+            if debug:
+                print(f"DRILL cluster z={z} -> z={next_z} tiles={len(tiles_next)}")
 
-    # Pass 2: fallback radius if none found and fallback expands
-    if not final_outs and fallback_radius_km > primary_radius_km:
-        if debug:
-            print(f"RADIUS FALLBACK: {primary_radius_km:.1f} km -> {fallback_radius_km:.1f} km")
-        final_outs = _filter_and_dedup(fallback_radius_km)
+            for tqk in tiles_next:
+                key = (next_z, tqk)
+                if key in drilled_tile_keys:
+                    continue
+                drilled_tile_keys.add(key)
 
-    final_outs.sort(key=lambda x: x.get("distance_km", float("inf")))
+                new_outs = fetch_tile_records(s, cluster_template, scheme, tqk, debug=debug)
+                for o in new_outs:
+                    if o.get("cluster") is True:
+                        if next_z < max_zoom:
+                            drill_queue.append((o["latitude"], o["longitude"], next_z))
+                    else:
+                        all_outs.append(o)
 
-    # nearest: prefer non-cluster if present
-    non_clusters = [o for o in final_outs if o.get("cluster") is False]
-    candidates = non_clusters if non_clusters else final_outs
-    nearest = min(candidates, key=lambda x: x.get("distance_km", float("inf"))) if candidates else None
+        # 6) Distance filter + dedupe
+        primary_radius_km = min(PRIMARY_RADIUS_KM, float(max_radius_km))
+        fallback_radius_km = min(FALLBACK_RADIUS_KM, float(max_radius_km))
 
-    return {"nearest": nearest, "outages": final_outs}
+        def _filter_and_dedup(radius_km: float) -> List[Dict[str, Any]]:
+            dedup: Set[str] = set()
+            final_outs: List[Dict[str, Any]] = []
+            for o in all_outs:
+                dist = haversine_km(lat, lon, o["latitude"], o["longitude"])
+                o["distance_km"] = dist
+
+                if dist > radius_km:
+                    continue
+
+                if o.get("cluster") is True:
+                    dkey = f"cluster:{o['latitude']:.6f},{o['longitude']:.6f}:{o.get('n_out')}:{o.get('customers_out')}"
+                else:
+                    dkey = f"inc:{o.get('id')}:{o['latitude']:.6f},{o['longitude']:.6f}:{o.get('start_time')}"
+
+                if dkey in dedup:
+                    continue
+                dedup.add(dkey)
+                final_outs.append(o)
+            return final_outs
+
+        final_outs = _filter_and_dedup(primary_radius_km)
+
+        if not final_outs and fallback_radius_km > primary_radius_km:
+            if debug:
+                print(f"RADIUS FALLBACK: {primary_radius_km:.1f} km -> {fallback_radius_km:.1f} km")
+            final_outs = _filter_and_dedup(fallback_radius_km)
+
+        final_outs.sort(key=lambda x: x.get("distance_km", float("inf")))
+
+        non_clusters = [o for o in final_outs if o.get("cluster") is False]
+        candidates = non_clusters if non_clusters else final_outs
+        nearest = min(candidates, key=lambda x: x.get("distance_km", float("inf"))) if candidates else None
+
+        return {"nearest": nearest, "outages": final_outs}
+
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
 
 
 # -----------------------------
 # Self-test
 # -----------------------------
+
 
 def _summarize(o: Optional[Dict[str, Any]]) -> str:
     if not o:
