@@ -348,47 +348,53 @@ def discover_stormcenter_and_view(debug: bool = False) -> Tuple[str, str]:
     """
     last_err: Optional[Exception] = None
 
-    for host in DEFAULT_HOST_CANDIDATES:
-        for path in ("/", "/outages", "/outage-map"):
-            url = host.rstrip("/") + path
-            try:
-                html = _get_text(s, url, debug=debug)
-            except Exception as e:
-                last_err = e
-                continue
-
-            m = _STORMCENTER_VIEW_RE.search(html)
-            if m:
-                if debug:
-                    print(f"DISCOVERED IDs via {url}")
-                return m.group(1), m.group(2)
-
-            script_srcs = re.findall(r'<script[^>]+src="([^"]+)"', html, flags=re.IGNORECASE)
-            # prioritize bundle-like scripts first
-            bundle_like = [src for src in script_srcs if any(k in src.lower() for k in ("main", "bundle", "app", "runtime"))]
-            for src in (bundle_like + script_srcs)[:6]:
-                js_url = src
-                if js_url.startswith("/"):
-                    js_url = host.rstrip("/") + js_url
-                elif js_url.startswith("//"):
-                    js_url = "https:" + js_url
-                elif not js_url.startswith("http"):
-                    js_url = host.rstrip("/") + "/" + js_url.lstrip("/")
-
+    s = requests.Session()
+    try:
+        for host in DEFAULT_HOST_CANDIDATES:
+            for path in ("/", "/outages", "/outage-map"):
+                url = host.rstrip("/") + path
                 try:
-                    js = _get_text(s, js_url, debug=debug)
+                    html = _get_text(s, url, debug=debug)
                 except Exception as e:
                     last_err = e
                     continue
 
-                m2 = _STORMCENTER_VIEW_RE.search(js)
-                if m2:
+                m = _STORMCENTER_VIEW_RE.search(html)
+                if m:
                     if debug:
-                        print(f"DISCOVERED IDs via JS {js_url}")
-                    return m2.group(1), m2.group(2)
+                        print(f"DISCOVERED IDs via {url}")
+                    return m.group(1), m.group(2)
 
-    raise EvergyKubraError(f"Unable to discover stormcenter/view IDs. Last error: {last_err}")
+                script_srcs = re.findall(r'<script[^>]+src="([^"]+)"', html, flags=re.IGNORECASE)
+                # prioritize bundle-like scripts first
+                bundle_like = [src for src in script_srcs if any(k in src.lower() for k in ("main", "bundle", "app", "runtime"))]
+                for src in (bundle_like + script_srcs)[:6]:
+                    js_url = src
+                    if js_url.startswith("/"):
+                        js_url = host.rstrip("/") + js_url
+                    elif js_url.startswith("//"):
+                        js_url = "https:" + js_url
+                    elif not js_url.startswith("http"):
+                        js_url = host.rstrip("/") + "/" + js_url.lstrip("/")
 
+                    try:
+                        js = _get_text(s, js_url, debug=debug)
+                    except Exception as e:
+                        last_err = e
+                        continue
+
+                    m2 = _STORMCENTER_VIEW_RE.search(js)
+                    if m2:
+                        if debug:
+                            print(f"DISCOVERED IDs via JS {js_url}")
+                        return m2.group(1), m2.group(2)
+
+        raise EvergyKubraError(f"Unable to discover stormcenter/view IDs. Last error: {last_err}")
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
 
 def fetch_current_state(s: requests.Session, stormcenter_id: str, view_id: str, debug: bool = False) -> Dict[str, Any]:
     url = (
