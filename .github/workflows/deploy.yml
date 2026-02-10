@@ -1,66 +1,96 @@
-name: Deploy Weather-and-Power App (SAM)
+name: "Deploy Weather-and-Power App (SAM)"
 
 on:
   push:
     branches: ["main"]
   workflow_dispatch: {}
 
+concurrency:
+  group: "weather-power-status-deploy"
+  cancel-in-progress: true
+
 permissions:
   id-token: write
   contents: read
+
+env:
+  SAM_CLI_TELEMETRY: "0"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: "Checkout"
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (OIDC)
+      - name: "Configure AWS credentials (OIDC)"
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Verify AWS identity
+      - name: "Verify AWS identity"
         run: |
           aws sts get-caller-identity
           aws configure list
 
-      - name: Set up Python
+      - name: "Set up Python"
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-
-      - name: Install dependencies (checks)
+      - name: "Install dependencies (checks)"
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pytest ruff
 
-      - name: Fail-fast: syntax + import checks
+      - name: "Fail-fast: syntax + import checks"
         run: |
           python -m compileall -q .
           # Minimal ruff ruleset: catch syntax errors, undefined names, and similar deploy-breakers.
           ruff check --select=E9,F63,F7,F82 .
 
-      - name: Run tests
+      - name: "Run tests"
         run: |
           pytest -q tests
 
-
-      - name: Install AWS SAM CLI
+      - name: "Install AWS SAM CLI"
         uses: aws-actions/setup-sam@v2
 
-      - name: SAM Build
+      - name: "Guard: wait for stack to be stable"
+        run: |
+          set -euo pipefail
+          STATUS=$(aws cloudformation describe-stacks --stack-name weather-power-status --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "MISSING")
+          echo "Stack status: $STATUS"
+
+          if [[ "$STATUS" == "MISSING" ]]; then
+            echo "Stack does not exist yet; continuing."
+            exit 0
+          fi
+
+          if [[ "$STATUS" == *"IN_PROGRESS"* ]]; then
+            echo "Stack is busy ($STATUS). Waiting..."
+            aws cloudformation wait stack-update-complete --stack-name weather-power-status || true
+            aws cloudformation wait stack-create-complete --stack-name weather-power-status || true
+          fi
+
+          STATUS2=$(aws cloudformation describe-stacks --stack-name weather-power-status --query "Stacks[0].StackStatus" --output text)
+          echo "Stack status after wait: $STATUS2"
+
+          if [[ "$STATUS2" == *"IN_PROGRESS"* ]]; then
+            echo "Stack still in progress; failing to avoid collision."
+            exit 1
+          fi
+
+      - name: "SAM Build"
         run: sam build --debug
 
-      - name: SAM Validate
+      - name: "SAM Validate"
         run: sam validate
 
-      - name: SAM Deploy
+      - name: "SAM Deploy"
         run: |
           sam deploy \
             --stack-name weather-power-status \
@@ -72,14 +102,14 @@ jobs:
             --no-fail-on-empty-changeset \
             --debug
 
-      - name: Dump CloudFormation events on failure
+      - name: "Dump CloudFormation events on failure"
         if: failure()
         run: |
           aws cloudformation describe-stack-events \
             --stack-name weather-power-status \
             --max-items 50
 
-      - name: Continue rollback only if needed
+      - name: "Continue rollback only if needed"
         if: failure()
         run: |
           STATUS=$(aws cloudformation describe-stacks --stack-name weather-power-status --query "Stacks[0].StackStatus" --output text)
@@ -89,14 +119,15 @@ jobs:
           else
             echo "No rollback action required."
           fi
-      - name: Show stack status
+
+      - name: "Show stack status"
         run: |
           aws cloudformation describe-stacks \
             --stack-name weather-power-status \
             --query "Stacks[0].StackStatus" \
             --output text || true
 
-      - name: Tail recent stack events
+      - name: "Tail recent stack events"
         run: |
           aws cloudformation describe-stack-events \
             --stack-name weather-power-status \
