@@ -354,7 +354,7 @@ class OgeKubraClient:
 
         # Quick discovery budget: if it runs too long, fail fast (caller cache TTL prevents frequent hits)
         t0 = time.time()
-        DISCOVERY_BUDGET_S = 6.0
+        DISCOVERY_BUDGET_S = 20
 
         for layer in self.cluster_layers:
             layer_id = layer["id"]
