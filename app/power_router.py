@@ -15,8 +15,8 @@ MAX_RADIUS_MILES = 20
 MAX_RADIUS_KM = MAX_RADIUS_MILES * 1.609344
 
 # Timeouts
-DIRECT_TIMEOUT_S = 30  # known utility
-PROBE_TIMEOUT_S = 15    # per-provider when utility is unknown
+DIRECT_TIMEOUT_S = 10  # known utility (must stay under /api/status budget)
+PROBE_TIMEOUT_S = 8     # per-provider when utility is unknown (bounded)
 
 # Metadata-only caching (provider health)
 HEALTH_TTL_S = 90  # seconds to "cool down" a provider after a failure/timeout
