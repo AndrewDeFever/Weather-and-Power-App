@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -38,10 +39,75 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 # Budgets / timeouts (keep under CloudFront/origin timeouts)
 # ----------------------------
 WEATHER_TOTAL_BUDGET_S = 8.0
-POWER_TOTAL_BUDGET_S = 12.0
+
+# Increased slightly to allow more work while still staying under your ~15s end-to-end SLA.
+# Note: If provider calls exceed this, we will serve cached power if available.
+POWER_TOTAL_BUDGET_S = 14.0
 
 # Per-request HTTP timeouts (connect+read). Keep these smaller than the total budget.
 HTTP_TIMEOUT_S = 5.0
+
+
+# ----------------------------
+# Power cache (best-effort fallback on timeouts)
+# ----------------------------
+# Goal: if a live power lookup times out (common for some providers),
+# return last-known-good power payload instead of empty timeouts.
+POWER_CACHE_TTL_S = 120  # seconds
+_power_cache: Dict[str, Dict[str, Any]] = {}  # key -> {"ts": float, "payload": dict}
+
+
+def _power_cache_key(resolved: Dict[str, Any]) -> str:
+    # Prefer stable site_id when available; otherwise bucket by rounded lat/lon.
+    sid = resolved.get("site_id")
+    if sid:
+        return f"site:{sid}"
+    lat = to_float(resolved.get("lat"))
+    lon = to_float(resolved.get("lon"))
+    if lat is None or lon is None:
+        return "unknown"
+    return f"ll:{lat:.3f},{lon:.3f}"
+
+
+def _cache_power_if_ok(resolved: Dict[str, Any], power_payload: Any) -> None:
+    try:
+        if not isinstance(power_payload, dict):
+            return
+        meta = power_payload.get("meta")
+        if isinstance(meta, dict) and meta.get("ok") is True:
+            _power_cache[_power_cache_key(resolved)] = {"ts": time.time(), "payload": power_payload}
+    except Exception:
+        # Never allow cache logic to break the endpoint
+        pass
+
+
+def _cached_power_on_timeout(resolved: Dict[str, Any], site_utility: Optional[str]) -> Dict[str, Any]:
+    """
+    Return cached power payload if available and fresh enough, otherwise an empty_power() timeout response.
+    Adds non-breaking meta fields: cached, cache_age_s.
+    """
+    try:
+        key = _power_cache_key(resolved)
+        cached = _power_cache.get(key)
+        if cached:
+            age = time.time() - float(cached.get("ts", 0.0))
+            if age <= POWER_CACHE_TTL_S:
+                payload = cached.get("payload")
+                if isinstance(payload, dict):
+                    # Annotate meta without removing any existing fields
+                    meta = payload.get("meta")
+                    if not isinstance(meta, dict):
+                        meta = {}
+                        payload["meta"] = meta
+                    meta["cached"] = True
+                    meta["cache_age_s"] = round(age, 1)
+                    meta["error"] = "Live power lookup timed out; serving cached result"
+                    meta["ok"] = True
+                    return payload
+    except Exception:
+        pass
+
+    return empty_power(site_utility, "Power lookup timed out", ok=False)
 
 
 # ----------------------------
@@ -480,9 +546,11 @@ def api_status(
         if site_utility:
             f_power = ex.submit(get_power_status, lat, lon, site_utility)
         else:
+
             def do_probe():
                 chosen, atts = probe_power_status(lat, lon)
                 return chosen, atts
+
             f_power = ex.submit(do_probe)
 
         # Weather: best-effort under budget (always return JSON)
@@ -509,7 +577,7 @@ def api_status(
                 f_power.cancel()
             except Exception:
                 pass
-            power_obj = empty_power(site_utility, "Power lookup timed out", ok=False)
+            power_obj = _cached_power_on_timeout(resolved, site_utility)
             attempts = []
         except Exception as e:
             power_obj = empty_power(site_utility, f"Power lookup failed: {type(e).__name__}: {e}", ok=False)
@@ -523,6 +591,9 @@ def api_status(
 
     # Normalize power object to dict
     power_payload = power_obj.model_dump() if hasattr(power_obj, "model_dump") else power_obj
+
+    # Cache successful power payloads (best-effort, never breaks endpoint)
+    _cache_power_if_ok(resolved, power_payload)
 
     # Provider banner: if probed, show the chosen utility when available
     banner_utility = site_utility
