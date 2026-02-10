@@ -14,6 +14,7 @@ Kubra high-level:
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import time
@@ -22,6 +23,8 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import mercantile
 import polyline
 import requests
+
+logger = logging.getLogger(__name__)
 
 # -------------------------- OG&E IDENTIFIERS --------------------------
 
@@ -380,10 +383,14 @@ class OgeKubraClient:
                             continue
 
                         if isinstance(js, dict) and "file_data" in js:
-                            # ALWAYS emit a single-line marker so we can hardcode the scheme.
-                            print(
-                                f"OGE_SCHEME_SUCCESS layer={layer_id} zoom={z} qkh={qkh_name} layout={layout_name} url={url}",
-                                flush=True,
+                            # Emit a single-line marker via logging so it reliably shows in CloudWatch.
+                            logger.warning(
+                                "OGE_SCHEME_SUCCESS layer=%s zoom=%s qkh=%s layout=%s url=%s",
+                                layer_id,
+                                z,
+                                qkh_name,
+                                layout_name,
+                                url,
                             )
                             if self.debug:
                                 print("PROBE SUCCESS:", url, flush=True)
