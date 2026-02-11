@@ -524,6 +524,9 @@ def discover_tile_scheme(
     nearby. Therefore we probe a small set of tiles (center + neighbors and/or
     known territory points) until we find ANY 200 tile with file_data.
     """
+    # Marker that should appear even if discovery never succeeds.
+    print("EVERGY_DISCOVERY_START", flush=True)
+
     layers = [f"cluster-{i}" for i in range(1, 21)]
     layouts = ["flat", "split2"]
     last_status: Optional[int] = None
@@ -545,15 +548,14 @@ def discover_tile_scheme(
                         continue
                     j = r.json()
                     if _looks_like_evergy_tile(j):
-                        # Emit a single-line marker via logging so it reliably shows in CloudWatch.
-                        logger.warning(
-                            "EVERGY_SCHEME_SUCCESS layer=%s zoom=%s qkh=last3_rev layout=%s url=%s qk=%s",
-                            layer,
-                            zoom,
-                            layout,
-                            url,
-                            qk,
+                        # Emit a marker that survives any logging config weirdness.
+                        msg = (
+                            f"EVERGY_SCHEME_SUCCESS layer={layer} zoom={zoom} qkh=last3_rev "
+                            f"layout={layout} url={url} qk={qk}"
                         )
+                        print(msg, flush=True)
+                        logger.warning(msg)
+
                         if debug:
                             print(f"PROBE SUCCESS: {url}")
                         return TileScheme(layer=layer, layout=layout, zoom=zoom)
@@ -728,9 +730,12 @@ def fetch_evergy_outages(
                 raise EvergyKubraError("Timeout after 12s")
             center_qk = latlon_to_quadkey(lat, lon, z)
 
-            qks_to_try = sorted(list(quadkey_neighbors(center_qk, depth=max(1, neighbor_depth))))
+            qks_to_try = sorted(
+                list(quadkey_neighbors(center_qk, depth=max(1, neighbor_depth)))
+            )
 
             territory_points = [
+                (39.0997, -94.5786),  # Kansas City (downtown) - high odds of live tile
                 (38.9822, -94.6708),  # KC / Overland Park
                 (39.0558, -95.6890),  # Topeka
                 (37.6872, -97.3301),  # Wichita
