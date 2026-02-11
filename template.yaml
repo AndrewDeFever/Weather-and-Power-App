@@ -21,6 +21,11 @@ Resources:
       Handler: lambda_handler.handler
       Policies:
         - AWSLambdaBasicExecutionRole
+      Environment:
+        Variables:
+          EVERGY_LAYER: "cluster-1"
+          EVERGY_LAYOUT: "flat"
+          EVERGY_ZOOM: "11"
       Events:
         Proxy:
           Type: HttpApi
