@@ -519,16 +519,6 @@ def discover_tile_scheme(
     Evergy deployment config for outage layers is protected (401),
     so auto-discover by validated probing.
 
-    Discover:
-    - which layer(s) exist (cluster-1..cluster-N)
-    - which layout is used (flat vs split2)
-
-    IMPORTANT:
-    Some Kubra deployments only materialize tiles where outages exist.
-    If the caller's center tile is empty, it may 404 even though the map has outages
-    nearby. Therefore we probe a small set of tiles (center + neighbors and/or
-    known territory points) until we find ANY 200 tile with file_data.
-
     Reliability policy:
     - Never spend unbounded time probing. Hard-cap discovery to DISCOVERY_BUDGET_SECONDS.
     - Keep probe fan-out small to avoid timing out the /api/status budget.
@@ -539,7 +529,6 @@ def discover_tile_scheme(
     def _expired() -> bool:
         return (time.time() - t0) > DISCOVERY_BUDGET_SECONDS
 
-    # Keep probe space small (Evergy often 404s empty tiles).
     qks = list(qks_to_try)[:DISCOVERY_MAX_QKS_PER_ZOOM]
     layers = [f"cluster-{i}" for i in range(1, DISCOVERY_MAX_LAYERS + 1)]
     layouts = ["flat", "split2"]
@@ -575,7 +564,6 @@ def discover_tile_scheme(
                             f"EVERGY_SCHEME_SUCCESS layer={layer} zoom={zoom} qkh=last3_rev "
                             f"layout={layout} url={url} qk={qk}"
                         )
-                        # Print is the most reliable signal in CloudWatch.
                         print(msg, flush=True)
                         logger.warning(msg)
 
@@ -630,8 +618,6 @@ def _normalize_record(rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     start_time = normalize_iso8601(_safe_str(desc.get("start_time")))
 
-    # Evergy: incident IDs are not always assigned/published.
-    # Policy for NOC: Only show a true Evergy/Kubra incident ID when provided; otherwise mark Unknown.
     outage_id = str(inc_id) if inc_id else "Unknown"
 
     return {
@@ -639,7 +625,7 @@ def _normalize_record(rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "cluster": bool(is_cluster),
         "customers_out": customers_out,
         "n_out": n_out,
-        "etr": normalize_iso8601(_safe_str(desc.get("etr"))),  # ISO string OR "ETR-EXP"
+        "etr": normalize_iso8601(_safe_str(desc.get("etr"))),
         "etr_confidence": _safe_str(desc.get("etr_confidence")),
         "cause": _localize_maybe(desc.get("cause")),
         "comments": _localize_maybe(desc.get("comments")),
@@ -696,21 +682,12 @@ def fetch_evergy_outages(
     neighbor_depth: int = 1,
     drill_neighbor_depth: int = 1,
     debug: bool = False,
-    # Optional overrides (recommended for reliability in NOC tooling)
     stormcenter_id: Optional[str] = None,
     view_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Fetch outages near (lat, lon) from Evergy Kubra StormCenter.
-
-    Fail behavior:
-      - Raises EvergyKubraError for controlled failures (router can catch).
-      - Returns {"nearest": None, "outages": []} ONLY if everything succeeds but nothing is found.
-    """
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         raise EvergyKubraError("Invalid lat/lon")
 
-    # Single session per invocation (reduces handshake overhead) + hard runtime budget.
     s = _session()
     t0 = time.time()
 
@@ -718,7 +695,6 @@ def fetch_evergy_outages(
         return TOTAL_BUDGET_SECONDS - (time.time() - t0)
 
     try:
-        # 1) Discover IDs unless provided (Option A), with a hard fallback (Option B)
         cached_ids = _cache_get("ids")
         if (not stormcenter_id or not view_id) and cached_ids:
             stormcenter_id, view_id = cached_ids
@@ -726,7 +702,6 @@ def fetch_evergy_outages(
             try:
                 stormcenter_id, view_id = discover_stormcenter_and_view(debug=debug)
             except EvergyKubraError as e:
-                # Operational fallback: use known IDs if discovery fails in this environment
                 if debug:
                     print(f"DISCOVERY FAILED: {e}")
                     print("FALLBACK to DEFAULT_STORMCENTER_ID/DEFAULT_VIEW_ID")
@@ -736,30 +711,30 @@ def fetch_evergy_outages(
         if debug:
             print(f"stormcenter={stormcenter_id} view={view_id}")
 
-        # 2) currentState -> cluster template (instance + generation included)
         cs = fetch_current_state(s, stormcenter_id, view_id, debug=debug)
         cluster_template = extract_cluster_template(cs)
         _cache_set(cluster_template=cluster_template)
         if debug:
             print(f"cluster_template={cluster_template}")
 
-        # 3) Select an entry zoom and discover tile scheme (layer + layout)
-        zoom_candidates = [10, 11, 12, 13, 14]
+        # ✅ CHANGE: keep zoom probing tight & predictable
+        zoom_candidates = [11, 12]
+
         scheme: Optional[TileScheme] = None
         last_err: Optional[Exception] = None
 
         for z in zoom_candidates:
             if _time_left() <= 1.0:
                 raise EvergyKubraError("Timeout after 12s")
-            center_qk = latlon_to_quadkey(lat, lon, z)
 
+            center_qk = latlon_to_quadkey(lat, lon, z)
             qks_to_try = sorted(
                 list(quadkey_neighbors(center_qk, depth=max(1, neighbor_depth)))
             )
 
             territory_points = [
-                (39.0997, -94.5786),  # Kansas City (downtown) - high odds of live tile
-                (38.9822, -94.6708),  # KC / Overland Park
+                (39.0997, -94.5786),  # Kansas City
+                (38.9822, -94.6708),  # Overland Park
                 (39.0156, -94.1986),  # Grain Valley (active outage area)
                 (39.0558, -95.6890),  # Topeka
                 (37.6872, -97.3301),  # Wichita
@@ -767,11 +742,10 @@ def fetch_evergy_outages(
             for tlat, tlon in territory_points:
                 qks_to_try.append(latlon_to_quadkey(tlat, tlon, z))
 
-            # De-dupe while preserving order
             seen: Set[str] = set()
             qks_to_try = [q for q in qks_to_try if not (q in seen or seen.add(q))]
 
-            # Optional fast-path: allow hardcoding the scheme via env vars (skips discovery entirely).
+            # Env override fast-path (skip discovery)
             env_layer = os.getenv("EVERGY_LAYER")
             env_layout = os.getenv("EVERGY_LAYOUT")
             env_zoom = os.getenv("EVERGY_ZOOM")
@@ -784,9 +758,11 @@ def fetch_evergy_outages(
                     )
                     _cache_set(scheme=scheme)
                     if debug:
-                        print(f"USING ENV SCHEME layer={scheme.layer} layout={scheme.layout} zoom={scheme.zoom}")
+                        print(
+                            f"USING ENV SCHEME layer={scheme.layer} "
+                            f"layout={scheme.layout} zoom={scheme.zoom}"
+                        )
                 except Exception:
-                    # Ignore bad env configuration and fall back to cache/discovery.
                     scheme = None
 
             cached_scheme = _cache_get("scheme")
@@ -795,15 +771,20 @@ def fetch_evergy_outages(
                 break
 
             try:
-                scheme = discover_tile_scheme(s, cluster_template, qks_to_try, z, debug=debug)
+                scheme = discover_tile_scheme(
+                    s, cluster_template, qks_to_try, z, debug=debug
+                )
                 _cache_set(scheme=scheme)
                 break
             except Exception as e:
                 last_err = e
-                continue
+                # ✅ CHANGE: do NOT burn 3s per zoom. One discovery attempt per request.
+                break
 
         if not scheme:
-            raise EvergyKubraError(f"Failed to discover tile scheme. Last error: {last_err}")
+            raise EvergyKubraError(
+                f"Failed to discover tile scheme. Last error: {last_err}"
+            )
 
         entry_zoom = scheme.zoom
         center_qk = latlon_to_quadkey(lat, lon, entry_zoom)
@@ -812,12 +793,13 @@ def fetch_evergy_outages(
             print(f"ENTRY zoom={entry_zoom} qk={center_qk}")
             print(f"USING layer={scheme.layer} layout={scheme.layout}")
 
-        # 4) Fetch entry neighborhood
         visited_tiles: Set[str] = set()
-        queue_tiles: List[str] = sorted(list(quadkey_neighbors(center_qk, depth=neighbor_depth)))
+        queue_tiles: List[str] = sorted(
+            list(quadkey_neighbors(center_qk, depth=neighbor_depth))
+        )
 
         all_outs: List[Dict[str, Any]] = []
-        drill_queue: List[Tuple[float, float, int]] = []  # clusters to drill; not returned
+        drill_queue: List[Tuple[float, float, int]] = []
 
         for qk in queue_tiles:
             if _time_left() <= 1.0:
@@ -833,10 +815,9 @@ def fetch_evergy_outages(
                 else:
                     all_outs.append(o)
 
-        # 5) Drill clusters down to max_zoom
         drill_ops = 0
         drill_cap = 120
-        drilled_tile_keys: Set[Tuple[int, str]] = set()  # (zoom, quadkey) to avoid repeats
+        drilled_tile_keys: Set[Tuple[int, str]] = set()
 
         while drill_queue:
             if _time_left() <= 1.0:
@@ -868,7 +849,9 @@ def fetch_evergy_outages(
                     continue
                 drilled_tile_keys.add(key)
 
-                new_outs = fetch_tile_records(s, cluster_template, scheme, tqk, debug=debug)
+                new_outs = fetch_tile_records(
+                    s, cluster_template, scheme, tqk, debug=debug
+                )
                 for o in new_outs:
                     if o.get("cluster") is True:
                         if next_z < max_zoom:
@@ -876,7 +859,6 @@ def fetch_evergy_outages(
                     else:
                         all_outs.append(o)
 
-        # 6) Distance filter + dedupe
         primary_radius_km = min(PRIMARY_RADIUS_KM, float(max_radius_km))
         fallback_radius_km = min(FALLBACK_RADIUS_KM, float(max_radius_km))
 
@@ -891,9 +873,15 @@ def fetch_evergy_outages(
                     continue
 
                 if o.get("cluster") is True:
-                    dkey = f"cluster:{o['latitude']:.6f},{o['longitude']:.6f}:{o.get('n_out')}:{o.get('customers_out')}"
+                    dkey = (
+                        f"cluster:{o['latitude']:.6f},{o['longitude']:.6f}:"
+                        f"{o.get('n_out')}:{o.get('customers_out')}"
+                    )
                 else:
-                    dkey = f"inc:{o.get('id')}:{o['latitude']:.6f},{o['longitude']:.6f}:{o.get('start_time')}"
+                    dkey = (
+                        f"inc:{o.get('id')}:{o['latitude']:.6f},{o['longitude']:.6f}:"
+                        f"{o.get('start_time')}"
+                    )
 
                 if dkey in dedup:
                     continue
@@ -905,14 +893,20 @@ def fetch_evergy_outages(
 
         if not final_outs and fallback_radius_km > primary_radius_km:
             if debug:
-                print(f"RADIUS FALLBACK: {primary_radius_km:.1f} km -> {fallback_radius_km:.1f} km")
+                print(
+                    f"RADIUS FALLBACK: {primary_radius_km:.1f} km -> {fallback_radius_km:.1f} km"
+                )
             final_outs = _filter_and_dedup(fallback_radius_km)
 
         final_outs.sort(key=lambda x: x.get("distance_km", float("inf")))
 
         non_clusters = [o for o in final_outs if o.get("cluster") is False]
         candidates = non_clusters if non_clusters else final_outs
-        nearest = min(candidates, key=lambda x: x.get("distance_km", float("inf"))) if candidates else None
+        nearest = (
+            min(candidates, key=lambda x: x.get("distance_km", float("inf")))
+            if candidates
+            else None
+        )
 
         return {"nearest": nearest, "outages": final_outs}
 
@@ -940,7 +934,6 @@ def _summarize(o: Optional[Dict[str, Any]]) -> str:
 
 
 if __name__ == "__main__":
-    # KC metro / Overland Park test point (Evergy territory)
     test_lat = 38.9822
     test_lon = -94.6708
 
@@ -954,7 +947,6 @@ if __name__ == "__main__":
             neighbor_depth=1,
             drill_neighbor_depth=1,
             debug=True,
-            # Deterministic test IDs (you captured these):
             stormcenter_id="b1493825-4ee3-4706-a986-99a763a733db",
             view_id="c1062d22-2919-487c-9000-e21b72b62278",
         )
