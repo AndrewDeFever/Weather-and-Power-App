@@ -457,9 +457,15 @@ def index():
 def api_status(
     query: Optional[str] = Query(None, description="Site ID or lat,lon"),
     q: Optional[str] = Query(None, description="Alias for 'query' (Site ID or lat,lon)"),
+    utility: Optional[str] = Query(
+        None,
+        description="Optional utility/provider override (e.g., EVERGY, PSO, OGE, ONCOR). "
+        "If provided with lat,lon queries, probing is skipped.",
+    ),
 ) -> Dict[str, Any]:
     raw_in = (query if query is not None else q)
     q_str = (raw_in or "").strip()
+    utility_override = (utility or "").strip().upper() or None
 
     if not q_str:
         return {
@@ -478,13 +484,15 @@ def api_status(
 
     if latlon:
         lat, lon = latlon
+        # If frontend supplies utility, skip probe.
+        site_utility = utility_override
         resolved = {
             "type": "latlon",
             "name": f"{lat:.7f}, {lon:.7f}",
             "site_id": None,
             "lat": lat,
             "lon": lon,
-            "utility": None,
+            "utility": site_utility,
         }
     else:
         sid = q_str.upper()
@@ -536,14 +544,12 @@ def api_status(
     attempts = []
 
     # Run in parallel but NEVER allow the request to exceed CloudFront/origin timeouts.
-    # IMPORTANT: do not use a context manager for ThreadPoolExecutor here.
-    # If a future times out, a context manager would wait for worker threads on exit,
-    # causing multi-minute hangs and CloudFront 504 HTML responses.
     ex = ThreadPoolExecutor(max_workers=2)
     try:
         f_weather = ex.submit(fetch_weather, lat, lon)
 
         if site_utility:
+            # Deterministic: no probe, call the chosen provider directly.
             f_power = ex.submit(get_power_status, lat, lon, site_utility)
         else:
 
@@ -577,6 +583,7 @@ def api_status(
                 f_power.cancel()
             except Exception:
                 pass
+            # FIX: correct function name (_cached_power_on_timeout)
             power_obj = _cached_power_on_timeout(resolved, site_utility)
             attempts = []
         except Exception as e:
@@ -607,6 +614,10 @@ def api_status(
         winner_utility = None
         if isinstance(power_payload, dict) and power_payload.get("has_outage_nearby"):
             winner_utility = power_payload.get("utility")
+
+        # Make resolved.utility informative for lat/lon probe cases (non-breaking)
+        if isinstance(resolved, dict) and resolved.get("utility") is None and winner_utility:
+            resolved["utility"] = winner_utility
 
         probe_payload = {
             "mode": "probe",
