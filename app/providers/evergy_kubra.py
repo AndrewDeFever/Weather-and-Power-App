@@ -40,6 +40,7 @@ crew_status, start_time, latitude, longitude, distance_km
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import time
@@ -48,6 +49,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 # -----------------------------
 # Exceptions
@@ -542,6 +545,15 @@ def discover_tile_scheme(
                         continue
                     j = r.json()
                     if _looks_like_evergy_tile(j):
+                        # Emit a single-line marker via logging so it reliably shows in CloudWatch.
+                        logger.warning(
+                            "EVERGY_SCHEME_SUCCESS layer=%s zoom=%s qkh=last3_rev layout=%s url=%s qk=%s",
+                            layer,
+                            zoom,
+                            layout,
+                            url,
+                            qk,
+                        )
                         if debug:
                             print(f"PROBE SUCCESS: {url}")
                         return TileScheme(layer=layer, layout=layout, zoom=zoom)
