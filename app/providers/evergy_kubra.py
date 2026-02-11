@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import math
 import re
 import time
@@ -107,6 +108,10 @@ def _cache_set(**kwargs):
 
 REQUEST_TIMEOUT = (3.0, 5.0)   # (connect, read) seconds per HTTP call
 TOTAL_BUDGET_SECONDS = 12.0    # overall provider budget to fit router 15s
+
+DISCOVERY_BUDGET_SECONDS = 3.0
+DISCOVERY_MAX_LAYERS = 6
+DISCOVERY_MAX_QKS_PER_ZOOM = 12
 
 
 def _session() -> requests.Session:
@@ -523,36 +528,54 @@ def discover_tile_scheme(
     If the caller's center tile is empty, it may 404 even though the map has outages
     nearby. Therefore we probe a small set of tiles (center + neighbors and/or
     known territory points) until we find ANY 200 tile with file_data.
+
+    Reliability policy:
+    - Never spend unbounded time probing. Hard-cap discovery to DISCOVERY_BUDGET_SECONDS.
+    - Keep probe fan-out small to avoid timing out the /api/status budget.
     """
-    # Marker that should appear even if discovery never succeeds.
+    t0 = time.time()
     print("EVERGY_DISCOVERY_START", flush=True)
 
-    layers = [f"cluster-{i}" for i in range(1, 21)]
+    def _expired() -> bool:
+        return (time.time() - t0) > DISCOVERY_BUDGET_SECONDS
+
+    # Keep probe space small (Evergy often 404s empty tiles).
+    qks = list(qks_to_try)[:DISCOVERY_MAX_QKS_PER_ZOOM]
+    layers = [f"cluster-{i}" for i in range(1, DISCOVERY_MAX_LAYERS + 1)]
     layouts = ["flat", "split2"]
+
     last_status: Optional[int] = None
 
-    for qk in qks_to_try:
+    for qk in qks:
         for layer in layers:
             for layout in layouts:
+                if _expired():
+                    raise EvergyKubraError(
+                        f"Evergy scheme discovery exceeded {DISCOVERY_BUDGET_SECONDS}s budget"
+                    )
+
                 url = build_tile_url(cluster_template, qk, layer, layout)
+
                 if debug:
                     print(
                         f"PROBE layer={layer} zoom={zoom} qkh=last3_rev "
                         f"layout={layout} qk={qk}"
                     )
                     print(f"   {url}")
+
                 try:
                     r = s.get(url, timeout=REQUEST_TIMEOUT)
                     last_status = r.status_code
                     if r.status_code != 200:
                         continue
+
                     j = r.json()
                     if _looks_like_evergy_tile(j):
-                        # Emit a marker that survives any logging config weirdness.
                         msg = (
                             f"EVERGY_SCHEME_SUCCESS layer={layer} zoom={zoom} qkh=last3_rev "
                             f"layout={layout} url={url} qk={qk}"
                         )
+                        # Print is the most reliable signal in CloudWatch.
                         print(msg, flush=True)
                         logger.warning(msg)
 
@@ -737,6 +760,7 @@ def fetch_evergy_outages(
             territory_points = [
                 (39.0997, -94.5786),  # Kansas City (downtown) - high odds of live tile
                 (38.9822, -94.6708),  # KC / Overland Park
+                (39.0156, -94.1986),  # Grain Valley (active outage area)
                 (39.0558, -95.6890),  # Topeka
                 (37.6872, -97.3301),  # Wichita
             ]
@@ -746,6 +770,24 @@ def fetch_evergy_outages(
             # De-dupe while preserving order
             seen: Set[str] = set()
             qks_to_try = [q for q in qks_to_try if not (q in seen or seen.add(q))]
+
+            # Optional fast-path: allow hardcoding the scheme via env vars (skips discovery entirely).
+            env_layer = os.getenv("EVERGY_LAYER")
+            env_layout = os.getenv("EVERGY_LAYOUT")
+            env_zoom = os.getenv("EVERGY_ZOOM")
+            if env_layer and env_layout and env_zoom:
+                try:
+                    scheme = TileScheme(
+                        layer=env_layer.strip(),
+                        layout=env_layout.strip(),
+                        zoom=int(env_zoom),
+                    )
+                    _cache_set(scheme=scheme)
+                    if debug:
+                        print(f"USING ENV SCHEME layer={scheme.layer} layout={scheme.layout} zoom={scheme.zoom}")
+                except Exception:
+                    # Ignore bad env configuration and fall back to cache/discovery.
+                    scheme = None
 
             cached_scheme = _cache_get("scheme")
             if cached_scheme:
