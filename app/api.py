@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
@@ -14,6 +15,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.power_router import get_power_status, probe_power_status
 
+log = logging.getLogger("wnp")
+
 app = FastAPI(title="Weather & Power Status", version="0.8.2")
 
 # ----------------------------
@@ -23,13 +26,18 @@ app = FastAPI(title="Weather & Power Status", version="0.8.2")
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     # Never let an exception bubble into an HTML 500 page.
     # Keep response shape backward compatible (do not remove fields).
-    err = f"{type(exc).__name__}: {exc}"
+    #
+    # SECURITY: Do NOT leak internal exception details to clients (audit finding).
+    # Log full exception server-side instead.
+    log.exception("Unhandled exception path=%s", request.url.path)
+
+    err_client = "Internal server error"
     payload = {
         "query": None,
         "resolved": {"type": "unknown", "name": "", "site_id": None},
         "provider": provider_info(None),
-        "weather": empty_weather(error=err),
-        "power": empty_power(None, err, ok=False),
+        "weather": empty_weather(error=err_client),
+        "power": empty_power(None, err_client, ok=False),
         "probe": None,
     }
     return JSONResponse(status_code=200, content=payload)
