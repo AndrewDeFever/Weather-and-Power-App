@@ -102,6 +102,33 @@ jobs:
             --no-fail-on-empty-changeset \
             --debug
 
+      # --- Deploy frontend to S3 (wnp.subrealstudios.com) ---
+      # Expects these files to exist in the repo:
+      #   frontend/index.html
+      #   frontend/static/app.js
+      #   frontend/static/styles.css
+      - name: "Deploy frontend (S3 static website)"
+        shell: bash
+        env:
+          FRONTEND_BUCKET: wnp.subrealstudios.com
+        run: |
+          set -euo pipefail
+
+          # Fail fast if the frontend isn't present (prevents silent drift)
+          test -f frontend/index.html
+          test -f frontend/static/app.js
+          test -f frontend/static/styles.css
+
+          echo "Uploading static assets (no-cache to avoid stale JS during rapid iteration)..."
+          aws s3 sync frontend/static "s3://${FRONTEND_BUCKET}/static" \
+            --delete \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          echo "Uploading index.html (no-cache)..."
+          aws s3 cp frontend/index.html "s3://${FRONTEND_BUCKET}/index.html" \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --content-type "text/html"
+
       - name: "Dump CloudFormation events on failure"
         if: failure()
         run: |
