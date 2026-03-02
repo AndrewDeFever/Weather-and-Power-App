@@ -40,6 +40,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
         "power": empty_power(None, err_client, ok=False),
         "probe": None,
     }
+    # Keep HTTP 200 to preserve current client expectations (we can tighten later).
     return JSONResponse(status_code=200, content=payload)
 
 
@@ -121,6 +122,9 @@ def _cached_power_on_timeout(resolved: Dict[str, Any], site_utility: Optional[st
 # ----------------------------
 # Helpers
 # ----------------------------
+ALLOWED_UTILITIES = {"PSO", "OGE", "EVERGY", "ONCOR", "AUSTIN"}
+
+
 def to_float(v: Any) -> Optional[float]:
     if v is None:
         return None
@@ -463,10 +467,11 @@ def index():
 # ----------------------------
 @app.get("/api/status")
 def api_status(
-    query: Optional[str] = Query(None, description="Site ID or lat,lon"),
-    q: Optional[str] = Query(None, description="Alias for 'query' (Site ID or lat,lon)"),
+    query: Optional[str] = Query(None, max_length=128, description="Site ID or lat,lon"),
+    q: Optional[str] = Query(None, max_length=128, description="Alias for 'query' (Site ID or lat,lon)"),
     utility: Optional[str] = Query(
         None,
+        max_length=16,
         description="Optional utility/provider override (e.g., EVERGY, PSO, OGE, ONCOR). "
         "If provided with lat,lon queries, probing is skipped.",
     ),
@@ -474,6 +479,18 @@ def api_status(
     raw_in = (query if query is not None else q)
     q_str = (raw_in or "").strip()
     utility_override = (utility or "").strip().upper() or None
+
+    # Validate utility override (only applies to the override param, not sites.json values)
+    if utility_override and utility_override not in ALLOWED_UTILITIES:
+        msg = f"Invalid utility '{utility_override}'. Allowed: {', '.join(sorted(ALLOWED_UTILITIES))}"
+        return {
+            "query": raw_in,
+            "resolved": {"type": "unknown", "name": "", "site_id": None},
+            "provider": provider_info(None),
+            "weather": empty_weather(error=msg),
+            "power": empty_power(None, msg, ok=False),
+            "probe": None,
+        }
 
     if not q_str:
         return {
@@ -492,6 +509,19 @@ def api_status(
 
     if latlon:
         lat, lon = latlon
+
+        # Range validation (audit-friendly input validation)
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            msg = "Invalid lat/lon range. Expected lat [-90..90], lon [-180..180]."
+            return {
+                "query": raw_in,
+                "resolved": {"type": "unknown", "name": q_str, "site_id": None},
+                "provider": provider_info(None),
+                "weather": empty_weather(error=msg),
+                "power": empty_power(None, msg, ok=False),
+                "probe": None,
+            }
+
         # If frontend supplies utility, skip probe.
         site_utility = utility_override
         resolved = {
