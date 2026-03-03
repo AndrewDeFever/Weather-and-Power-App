@@ -435,6 +435,7 @@ def api_status(
     q: Optional[str] = Query(default=None, max_length=128),
     query: Optional[str] = Query(default=None, max_length=128),
     utility: Optional[str] = Query(default=None, max_length=16),
+    probe: bool = Query(default=False),
 ):
     # prefer explicit query param if both present
     effective_q = query if query is not None else q
@@ -606,10 +607,10 @@ def api_status(
     power_payload: Dict[str, Any] = empty_power(utility_override, "Power unavailable", ok=False)
     probe_payload: Optional[Dict[str, Any]] = None
 
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=3 if probe else 2) as ex:
         wf = ex.submit(_call_weather)
         pf = ex.submit(_call_power)
-        prf = ex.submit(_call_probe)
+        prf = ex.submit(_call_probe) if probe else None
 
         try:
             weather_payload = wf.result(timeout=WEATHER_TOTAL_BUDGET_S)
@@ -628,12 +629,15 @@ def api_status(
             log.exception("Power lookup failed")
             power_payload = empty_power(utility_override, "Power lookup failed", ok=False)
 
-        try:
-            probe_payload = prf.result(timeout=POWER_TOTAL_BUDGET_S)
-        except FuturesTimeout:
-            probe_payload = None
-        except Exception:
-            log.exception("Probe failed")
+        if prf is not None:
+            try:
+                probe_payload = prf.result(timeout=POWER_TOTAL_BUDGET_S)
+            except FuturesTimeout:
+                probe_payload = None
+            except Exception:
+                log.exception("Probe failed")
+                probe_payload = None
+        else:
             probe_payload = None
 
     payload = {
