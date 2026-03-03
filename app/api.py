@@ -338,71 +338,129 @@ SITES = load_sites()
 # ----------------------------
 # Weather (NWS)
 # ----------------------------
-NWS_POINTS = "https://api.weather.gov/points/{lat},{lon}"
-NWS_OBS = "https://api.weather.gov/stations/{station}/observations/latest"
-NWS_FORECAST = "https://api.weather.gov/gridpoints/{wfo}/{x},{y}/forecast"
-NWS_FORECAST_HOURLY = "https://api.weather.gov/gridpoints/{wfo}/{x},{y}/forecast/hourly"
-NWS_ALERTS = "https://api.weather.gov/alerts/active?point={lat},{lon}"
+#
+# Goal: **operationally efficient, point-in-time** weather.
+# - Keep: current observation, alerts, and (optionally) a *single* near-term forecast period text.
+# - Drop: hourly forecast and multi-day period lists.
+# - Add: lightweight in-memory caching to avoid hammering api.weather.gov.
+#
 
-DEFAULT_HEADERS = {
-    "User-Agent": "WeatherPowerStatus/1.0 (contact: subrealstudios.com)",
-    "Accept": "application/geo+json, application/json",
-}
+NWS_USER_AGENT = os.getenv("NWS_USER_AGENT", "wnp.subrealstudios.com (contact: admin@subrealstudios.com)")
+NWS_TIMEOUT_S = float(os.getenv("NWS_TIMEOUT_S", "6.5"))
+
+# Cache TTLs (seconds)
+NWS_POINTS_TTL_S = int(os.getenv("NWS_POINTS_TTL_S", str(24 * 60 * 60)))  # points + station rarely change
+NWS_WEATHER_TTL_S = int(os.getenv("NWS_WEATHER_TTL_S", "120"))  # point-in-time snapshot cache (default 2 min)
+
+# Very small in-memory caches (Lambda warm invocations benefit)
+_nws_points_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_nws_station_cache: Dict[str, Tuple[float, str]] = {}
+_nws_weather_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+
+
+def _cache_get(cache: Dict[str, Tuple[float, Any]], key: str, ttl_s: int):
+    now = time.time()
+    item = cache.get(key)
+    if not item:
+        return None
+    ts, val = item
+    if (now - ts) > ttl_s:
+        cache.pop(key, None)
+        return None
+    return val
+
+
+def _cache_set(cache: Dict[str, Tuple[float, Any]], key: str, val: Any):
+    cache[key] = (time.time(), val)
+
+
+def _nws_headers() -> Dict[str, str]:
+    # NWS asks for a descriptive User-Agent; also helps when they need to contact you.
+    return {
+        "User-Agent": NWS_USER_AGENT,
+        "Accept": "application/geo+json, application/json",
+    }
+
+
+def _nws_get_json(url: str) -> Dict[str, Any]:
+    r = requests.get(url, headers=_nws_headers(), timeout=NWS_TIMEOUT_S)
+    r.raise_for_status()
+    return r.json()
 
 
 def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
-    points_url = NWS_POINTS.format(lat=lat, lon=lon)
-    r = requests.get(points_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
-    r.raise_for_status()
-    pts = r.json()
+    # Round coordinates for cache key; exact precision isn't operationally meaningful
+    key = f"{lat:.4f},{lon:.4f}"
 
-    props = (pts.get("properties") or {})
-    stations_url = props.get("observationStations")
-    forecast_url = props.get("forecast")
-    forecast_hourly_url = props.get("forecastHourly")
+    cached = _cache_get(_nws_weather_cache, key, NWS_WEATHER_TTL_S)
+    if cached is not None:
+        return cached
 
-    station_id = None
-    if stations_url:
-        rs = requests.get(stations_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
-        rs.raise_for_status()
-        stations = rs.json()
-        features = (stations.get("features") or [])
-        if features:
-            station_id = ((features[0] or {}).get("properties") or {}).get("stationIdentifier")
+    try:
+        # 1) Points metadata (cached)
+        points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}"
+        points = _cache_get(_nws_points_cache, points_url, NWS_POINTS_TTL_S)
+        if points is None:
+            points = _nws_get_json(points_url)
+            _cache_set(_nws_points_cache, points_url, points)
 
-    current = None
-    if station_id:
-        ro = requests.get(
-            NWS_OBS.format(station=station_id), headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S
-        )
-        ro.raise_for_status()
-        obs = ro.json()
-        current = (obs.get("properties") or {})
+        props = (points or {}).get("properties") or {}
+        stations_url = props.get("observationStations")
+        forecast_url = props.get("forecast")
+        alerts_url = f"https://api.weather.gov/alerts/active?point={lat:.4f},{lon:.4f}"
 
-    forecast = None
-    if forecast_url:
-        rf = requests.get(forecast_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
-        rf.raise_for_status()
-        forecast = (rf.json().get("properties") or {})
+        # 2) Resolve station id (cached)
+        station_id = None
+        if stations_url:
+            station_id = _cache_get(_nws_station_cache, stations_url, NWS_POINTS_TTL_S)
+            if station_id is None:
+                stations = _nws_get_json(stations_url)
+                feats = (stations or {}).get("features") or []
+                if feats:
+                    station_id = (feats[0] or {}).get("properties", {}).get("stationIdentifier")
+                if station_id:
+                    _cache_set(_nws_station_cache, stations_url, station_id)
 
-    hourly = None
-    if forecast_hourly_url:
-        rh = requests.get(forecast_hourly_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
-        rh.raise_for_status()
-        hourly = (rh.json().get("properties") or {})
+        # 3) Current observation (latest)
+        current = None
+        if station_id:
+            obs_url = f"https://api.weather.gov/stations/{station_id}/observations/latest"
+            current = _nws_get_json(obs_url)
 
-    alerts = None
-    ra = requests.get(NWS_ALERTS.format(lat=lat, lon=lon), headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
-    if ra.status_code == 200:
-        alerts = ra.json()
+        # 4) Alerts (active)
+        alerts = _nws_get_json(alerts_url)
 
-    return {
-        "meta": {"ok": True, "error": None},
-        "current": current,
-        "forecast": forecast,
-        "hourly": hourly,
-        "alerts": alerts,
-    }
+        # 5) Optional: single forecast period text only (keep UI compatibility but avoid huge payload)
+        forecast = None
+        if forecast_url:
+            forecast = _nws_get_json(forecast_url)
+            fprops = (forecast or {}).get("properties") or {}
+            periods = fprops.get("periods") or []
+            if isinstance(periods, list) and len(periods) > 1:
+                fprops["periods"] = periods[:1]
+                forecast["properties"] = fprops
+
+        result = {
+            "meta": {"ok": True, "error": None},
+            "current": current,
+            "forecast": forecast,   # trimmed to 1 period max
+            "hourly": None,         # intentionally disabled (was too heavy/noisy)
+            "alerts": alerts,
+        }
+        _cache_set(_nws_weather_cache, key, result)
+        return result
+
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        result = {
+            "meta": {"ok": False, "error": err},
+            "current": None,
+            "forecast": None,
+            "hourly": None,
+            "alerts": None,
+        }
+        _cache_set(_nws_weather_cache, key, result)
+        return result
 
 
 # ----------------------------
@@ -435,7 +493,6 @@ def api_status(
     q: Optional[str] = Query(default=None, max_length=128),
     query: Optional[str] = Query(default=None, max_length=128),
     utility: Optional[str] = Query(default=None, max_length=16),
-    probe: bool = Query(default=False),
 ):
     # prefer explicit query param if both present
     effective_q = query if query is not None else q
@@ -511,68 +568,50 @@ def api_status(
         resolved = {"type": "latlon", "name": "", "site_id": None, "lat": lat, "lon": lon}
 
     elif effective_q:
-        # IMPORTANT: Treat exact q matches as site_id first (prevents fuzzy mis-resolve like PSOTEST -> OGETEST)
-        sid = effective_q.strip()
-        if sid in SITES:
-            site = SITES.get(sid) or {}
-            resolved = {
-                "type": "site_id",
-                "name": site.get("name") or "",
-                "site_id": sid,
-                "lat": site.get("lat"),
-                "lon": site.get("lon"),
-            }
-            lat = to_float(site.get("lat"))
-            lon = to_float(site.get("lon"))
-            if not utility_override:
-                util = (site.get("utility") or "").strip().upper()
-                if util in ALLOWED_UTILITIES:
-                    utility_override = util
+        # attempt parse "lat,lon" from q/query
+        ll = parse_latlon(effective_q)
+        if ll:
+            lat, lon = ll
+            if lat < -90.0 or lat > 90.0 or lon < -180.0 or lon > 180.0:
+                msg = "Invalid lat/lon range"
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "query": effective_q,
+                        "resolved": resolved,
+                        "provider": provider_info(utility_override),
+                        "weather": empty_weather(error=msg),
+                        "power": empty_power(utility_override, msg, ok=False),
+                        "probe": None,
+                    },
+                )
+            resolved = {"type": "latlon", "name": "", "site_id": None, "lat": lat, "lon": lon}
         else:
-            # attempt parse "lat,lon" from q/query
-            ll = parse_latlon(effective_q)
-            if ll:
-                lat, lon = ll
-                if lat < -90.0 or lat > 90.0 or lon < -180.0 or lon > 180.0:
-                    msg = "Invalid lat/lon range"
-                    return JSONResponse(
-                        status_code=200,
-                        content={
-                            "query": effective_q,
-                            "resolved": resolved,
-                            "provider": provider_info(utility_override),
-                            "weather": empty_weather(error=msg),
-                            "power": empty_power(utility_override, msg, ok=False),
-                            "probe": None,
-                        },
-                    )
-                resolved = {"type": "latlon", "name": "", "site_id": None, "lat": lat, "lon": lon}
-            else:
-                # fuzzy match against site names
-                try:
-                    names = {sid: (SITES[sid].get("name") or "") for sid in SITES.keys()}
-                    choices = list(names.values())
-                    matches = difflib.get_close_matches(effective_q, choices, n=1, cutoff=0.5)
-                    if matches:
-                        match_name = matches[0]
-                        match_sid = next((sid for sid, nm in names.items() if nm == match_name), None)
-                        if match_sid:
-                            site = SITES.get(match_sid) or {}
-                            resolved = {
-                                "type": "site_id",
-                                "name": site.get("name") or "",
-                                "site_id": match_sid,
-                                "lat": site.get("lat"),
-                                "lon": site.get("lon"),
-                            }
-                            lat = to_float(site.get("lat"))
-                            lon = to_float(site.get("lon"))
-                            if not utility_override:
-                                util = (site.get("utility") or "").strip().upper()
-                                if util in ALLOWED_UTILITIES:
-                                    utility_override = util
-                except Exception:
-                    pass
+            # fuzzy match against site names
+            try:
+                names = {sid: (SITES[sid].get("name") or "") for sid in SITES.keys()}
+                choices = list(names.values())
+                matches = difflib.get_close_matches(effective_q, choices, n=1, cutoff=0.5)
+                if matches:
+                    match_name = matches[0]
+                    match_sid = next((sid for sid, nm in names.items() if nm == match_name), None)
+                    if match_sid:
+                        site = SITES.get(match_sid) or {}
+                        resolved = {
+                            "type": "site_id",
+                            "name": site.get("name") or "",
+                            "site_id": match_sid,
+                            "lat": site.get("lat"),
+                            "lon": site.get("lon"),
+                        }
+                        lat = to_float(site.get("lat"))
+                        lon = to_float(site.get("lon"))
+                        if not utility_override:
+                            util = (site.get("utility") or "").strip().upper()
+                            if util in ALLOWED_UTILITIES:
+                                utility_override = util
+            except Exception:
+                pass
 
     if lat is None or lon is None:
         msg = "Provide site_id or lat/lon"
@@ -607,10 +646,10 @@ def api_status(
     power_payload: Dict[str, Any] = empty_power(utility_override, "Power unavailable", ok=False)
     probe_payload: Optional[Dict[str, Any]] = None
 
-    with ThreadPoolExecutor(max_workers=3 if probe else 2) as ex:
+    with ThreadPoolExecutor(max_workers=3) as ex:
         wf = ex.submit(_call_weather)
         pf = ex.submit(_call_power)
-        prf = ex.submit(_call_probe) if probe else None
+        prf = ex.submit(_call_probe)
 
         try:
             weather_payload = wf.result(timeout=WEATHER_TOTAL_BUDGET_S)
@@ -629,15 +668,12 @@ def api_status(
             log.exception("Power lookup failed")
             power_payload = empty_power(utility_override, "Power lookup failed", ok=False)
 
-        if prf is not None:
-            try:
-                probe_payload = prf.result(timeout=POWER_TOTAL_BUDGET_S)
-            except FuturesTimeout:
-                probe_payload = None
-            except Exception:
-                log.exception("Probe failed")
-                probe_payload = None
-        else:
+        try:
+            probe_payload = prf.result(timeout=POWER_TOTAL_BUDGET_S)
+        except FuturesTimeout:
+            probe_payload = None
+        except Exception:
+            log.exception("Probe failed")
             probe_payload = None
 
     payload = {
