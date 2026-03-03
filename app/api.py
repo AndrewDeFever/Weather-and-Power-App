@@ -3,9 +3,7 @@ from __future__ import annotations
 import difflib
 import json
 import logging
-import os
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -69,10 +67,6 @@ _rl_refill_per_sec = RL_PER_MIN / 60.0
 # key -> {"tokens": float, "ts": float}
 _rl_buckets: Dict[str, Dict[str, float]] = {}
 
-# Best-effort instance identifier for debugging rate limiting in Lambda.
-# AWS_LAMBDA_LOG_STREAM_NAME is stable per execution environment; fallback to UUID.
-_INSTANCE_ID = os.environ.get("AWS_LAMBDA_LOG_STREAM_NAME") or str(uuid.uuid4())
-
 
 def _client_ip(request: Request) -> str:
     # If behind CloudFront/API GW, X-Forwarded-For is typically present.
@@ -113,18 +107,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Only rate limit API endpoints (leave static/index alone).
         if request.url.path.startswith("/api/"):
             ip = _client_ip(request)
-            allowed = _rate_limit_allow(ip)
-
-            # Observability headers to prove limiter is on-path and detect multi-instance.
-            # Safe for audits: no secrets, just control-plane debugging.
-            rl_headers = {
-                "X-RateLimit-Path": "1",
-                "X-RateLimited": "0" if allowed else "1",
-                "X-RateLimit-Client-IP": ip,
-                "X-Instance-Id": _INSTANCE_ID,
-            }
-
-            if not allowed:
+            if not _rate_limit_allow(ip):
                 # Keep response shape compatible + HTTP 200 (can tighten later).
                 msg = "Rate limit exceeded. Please retry shortly."
                 payload = {
@@ -135,13 +118,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "power": empty_power(None, msg, ok=False),
                     "probe": None,
                 }
-                resp = JSONResponse(status_code=200, content=payload)
-                resp.headers.update(rl_headers)
-                return resp
-
-            resp = await call_next(request)
-            resp.headers.update(rl_headers)
-            return resp
+                return JSONResponse(status_code=200, content=payload)
 
         return await call_next(request)
 
@@ -275,8 +252,8 @@ def provider_info(utility: Optional[str]) -> Dict[str, Any]:
         return {
             "utility": "OGE",
             "name": "OG&E",
-            "outage_map": "https://www.oge.com/wps/portal/oge/outages/system-watch",
-            "platform": "ESRI",
+            "outage_map": "https://outagemap.oge.com/",
+            "platform": "KUBRA",
         }
     if u == "EVERGY":
         return {
@@ -299,389 +276,471 @@ def provider_info(utility: Optional[str]) -> Dict[str, Any]:
             "outage_map": "https://outagemap.austinenergy.com/",
             "platform": "KUBRA",
         }
-    return {"utility": u or None}
+    if u:
+        return {"utility": u, "name": u, "outage_map": None, "platform": ""}
+    return {"utility": None, "name": "Unknown", "outage_map": None, "platform": ""}
 
 
 def empty_weather(error: Optional[str] = None) -> Dict[str, Any]:
+    w: Dict[str, Any] = {
+        "temperature_f": None,
+        "condition": None,
+        "wind_speed_mph": None,
+        "wind_gust_mph": None,
+        "wind_direction_deg": None,
+        "wind_direction_cardinal": None,
+        "precip_last_hour_in": None,
+        "wind_chill_f": None,
+        "heat_index_f": None,
+        "observation_time": None,
+        "station_id": None,
+        "temp_kind": None,
+        "temp_source": None,
+        "temp_source_url": None,
+        "detailedForecast": None,
+        "has_weather_alert": False,
+        "max_alert_severity": "none",
+        "alerts": [],
+    }
+    if error:
+        w["error"] = error
+    return w
+
+
+def empty_power(utility: Optional[str], error: str, ok: bool = False) -> Dict[str, Any]:
     return {
-        "meta": {"ok": False, "error": error},
-        "current": None,
-        "forecast": None,
-        "hourly": None,
-        "alerts": None,
+        "utility": (utility or "").strip().upper() or None,
+        "has_outage_nearby": False,
+        "nearest": None,
+        "outages": [],
+        "meta": {"source": "app.api", "ok": ok, "error": error},
     }
 
 
-def empty_power(utility: Optional[str], error: Optional[str], ok: bool = False) -> Dict[str, Any]:
-    return {"meta": {"ok": ok, "error": error}, "utility": (utility or None), "status": None}
+def c_to_f(c: float) -> float:
+    return (c * 9.0 / 5.0) + 32.0
 
 
-# ----------------------------
-# Sites file
-# ----------------------------
-BASE_DIR = Path(__file__).resolve().parent
-SITES_PATH = BASE_DIR / "data" / "sites.json"
+def mps_to_mph(mps: float) -> float:
+    return mps * 2.2369362920544
 
 
-def load_sites() -> Dict[str, Any]:
+def kmh_to_mph(kmh: float) -> float:
+    return kmh * 0.621371192237334
+
+
+def mm_to_in(mm: float) -> float:
+    return mm / 25.4
+
+
+def deg_to_cardinal(deg: Optional[float]) -> Optional[str]:
+    if deg is None:
+        return None
     try:
-        if not SITES_PATH.exists():
-            return {}
-        return json.loads(SITES_PATH.read_text(encoding="utf-8"))
+        d = float(deg) % 360.0
     except Exception:
-        log.exception("Failed to load sites.json")
-        return {}
+        return None
+    dirs = [
+        "N",
+        "NNE",
+        "NE",
+        "ENE",
+        "E",
+        "ESE",
+        "SE",
+        "SSE",
+        "S",
+        "SSW",
+        "SW",
+        "WSW",
+        "W",
+        "WNW",
+        "NW",
+        "NNW",
+    ]
+    idx = int((d + 11.25) // 22.5) % 16
+    return dirs[idx]
 
 
-SITES = load_sites()
+# ----------------------------
+# Load sites
+# ----------------------------
+SITES_PATH = Path(__file__).resolve().parent / "data" / "sites.json"
+try:
+    SITES = json.loads(SITES_PATH.read_text(encoding="utf-8"))
+except Exception:
+    SITES = {}
+
 
 # ----------------------------
 # Weather (NWS)
 # ----------------------------
-#
-# Goal: **operationally efficient, point-in-time** weather.
-# - Keep: current observation, alerts, and (optionally) a *single* near-term forecast period text.
-# - Drop: hourly forecast and multi-day period lists.
-# - Add: lightweight in-memory caching to avoid hammering api.weather.gov.
-#
+NWS_POINTS = "https://api.weather.gov/points/{lat},{lon}"
+NWS_OBSERVATION = "https://api.weather.gov/stations/{station}/observations/latest"
+NWS_ALERTS = "https://api.weather.gov/alerts/active?point={lat},{lon}"
 
-NWS_USER_AGENT = os.getenv("NWS_USER_AGENT", "wnp.subrealstudios.com (contact: admin@subrealstudios.com)")
-NWS_TIMEOUT_S = float(os.getenv("NWS_TIMEOUT_S", "6.5"))
-
-# Cache TTLs (seconds)
-NWS_POINTS_TTL_S = int(os.getenv("NWS_POINTS_TTL_S", str(24 * 60 * 60)))  # points + station rarely change
-NWS_WEATHER_TTL_S = int(os.getenv("NWS_WEATHER_TTL_S", "120"))  # point-in-time snapshot cache (default 2 min)
-
-# Very small in-memory caches (Lambda warm invocations benefit)
-_nws_points_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-_nws_station_cache: Dict[str, Tuple[float, str]] = {}
-_nws_weather_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-
-
-def _cache_get(cache: Dict[str, Tuple[float, Any]], key: str, ttl_s: int):
-    now = time.time()
-    item = cache.get(key)
-    if not item:
-        return None
-    ts, val = item
-    if (now - ts) > ttl_s:
-        cache.pop(key, None)
-        return None
-    return val
-
-
-def _cache_set(cache: Dict[str, Tuple[float, Any]], key: str, val: Any):
-    cache[key] = (time.time(), val)
-
-
-def _nws_headers() -> Dict[str, str]:
-    # NWS asks for a descriptive User-Agent; also helps when they need to contact you.
-    return {
-        "User-Agent": NWS_USER_AGENT,
-        "Accept": "application/geo+json, application/json",
-    }
-
-
-def _nws_get_json(url: str) -> Dict[str, Any]:
-    r = requests.get(url, headers=_nws_headers(), timeout=NWS_TIMEOUT_S)
-    r.raise_for_status()
-    return r.json()
+DEFAULT_HEADERS = {
+    "User-Agent": "WeatherPowerStatus/1.0 (contact: subrealstudios.com)",
+    "Accept": "application/geo+json, application/json",
+}
 
 
 def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
-    # Round coordinates for cache key; exact precision isn't operationally meaningful
-    key = f"{lat:.4f},{lon:.4f}"
+    points_url = NWS_POINTS.format(lat=lat, lon=lon)
+    r = requests.get(points_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+    r.raise_for_status()
+    pts = r.json()
 
-    cached = _cache_get(_nws_weather_cache, key, NWS_WEATHER_TTL_S)
-    if cached is not None:
-        return cached
+    props = (pts.get("properties") or {})
+    stations_url = props.get("observationStations")
+    forecast_url = props.get("forecast")
+    forecast_hourly_url = props.get("forecastHourly")
 
+    station_id = None
+    if stations_url:
+        try:
+            rs = requests.get(stations_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+            rs.raise_for_status()
+            st = rs.json()
+            feats = st.get("features") or []
+            if feats and isinstance(feats, list):
+                station_id = (feats[0].get("properties") or {}).get("stationIdentifier")
+        except Exception:
+            station_id = None
+
+    out = empty_weather()
+    out["temp_source_url"] = None
+
+    if station_id:
+        obs_url = NWS_OBSERVATION.format(station=station_id)
+        out["temp_source_url"] = obs_url
+        try:
+            ro = requests.get(obs_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+            ro.raise_for_status()
+            obs = ro.json()
+            oprops = (obs.get("properties") or {})
+            t_c = (oprops.get("temperature") or {}).get("value")
+            if isinstance(t_c, (int, float)):
+                out["temperature_f"] = round(c_to_f(float(t_c)), 1)
+                out["temp_kind"] = "observed"
+                out["temp_source"] = "NWS_OBSERVATION"
+            out["station_id"] = station_id
+            out["observation_time"] = oprops.get("timestamp")
+
+            wspd = (oprops.get("windSpeed") or {}).get("value")
+            wgst = (oprops.get("windGust") or {}).get("value")
+            wdir = (oprops.get("windDirection") or {}).get("value")
+            if isinstance(wspd, (int, float)):
+                out["wind_speed_mph"] = round(mps_to_mph(float(wspd)), 1)
+            if isinstance(wgst, (int, float)):
+                out["wind_gust_mph"] = round(mps_to_mph(float(wgst)), 1)
+            if isinstance(wdir, (int, float)):
+                out["wind_direction_deg"] = float(wdir)
+                out["wind_direction_cardinal"] = deg_to_cardinal(float(wdir))
+
+            p = (oprops.get("precipitationLastHour") or {}).get("value")
+            if isinstance(p, (int, float)):
+                out["precip_last_hour_in"] = round(mm_to_in(float(p)), 3)
+
+            wc = (oprops.get("windChill") or {}).get("value")
+            hi = (oprops.get("heatIndex") or {}).get("value")
+            if isinstance(wc, (int, float)):
+                out["wind_chill_f"] = round(c_to_f(float(wc)), 1)
+            if isinstance(hi, (int, float)):
+                out["heat_index_f"] = round(c_to_f(float(hi)), 1)
+
+            out["condition"] = oprops.get("textDescription")
+        except Exception:
+            pass
+
+    if out.get("temperature_f") is None and forecast_url:
+        try:
+            rf = requests.get(forecast_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+            rf.raise_for_status()
+            fc = rf.json()
+            periods = ((fc.get("properties") or {}).get("periods") or [])
+            if periods and isinstance(periods, list):
+                p0 = periods[0] or {}
+                t = p0.get("temperature")
+                if isinstance(t, (int, float)):
+                    out["temperature_f"] = float(t)
+                    out["temp_kind"] = "forecast_fallback"
+                    out["temp_source"] = "NWS_FORECAST"
+                    out["temp_source_url"] = forecast_url
+                out["condition"] = p0.get("shortForecast") or out.get("condition")
+                out["detailedForecast"] = p0.get("detailedForecast")
+        except Exception:
+            pass
+
+    alerts_url = NWS_ALERTS.format(lat=lat, lon=lon)
     try:
-        # 1) Points metadata (cached)
-        points_url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}"
-        points = _cache_get(_nws_points_cache, points_url, NWS_POINTS_TTL_S)
-        if points is None:
-            points = _nws_get_json(points_url)
-            _cache_set(_nws_points_cache, points_url, points)
+        ra = requests.get(alerts_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+        ra.raise_for_status()
+        aj = ra.json()
+        feats = aj.get("features") or []
+    except Exception:
+        feats = []
 
-        props = (points or {}).get("properties") or {}
-        stations_url = props.get("observationStations")
-        forecast_url = props.get("forecast")
-        alerts_url = f"https://api.weather.gov/alerts/active?point={lat:.4f},{lon:.4f}"
+    alerts = []
+    max_alert_severity = "none"
+    has_weather_alert = False
+    sev_rank = {"none": 0, "minor": 1, "moderate": 2, "severe": 3, "extreme": 4}
 
-        # 2) Resolve station id (cached)
-        station_id = None
-        if stations_url:
-            station_id = _cache_get(_nws_station_cache, stations_url, NWS_POINTS_TTL_S)
-            if station_id is None:
-                stations = _nws_get_json(stations_url)
-                feats = (stations or {}).get("features") or []
-                if feats:
-                    station_id = (feats[0] or {}).get("properties", {}).get("stationIdentifier")
-                if station_id:
-                    _cache_set(_nws_station_cache, stations_url, station_id)
+    for f in feats:
+        props = (f.get("properties") or {})
+        event = props.get("event")
+        severity = (props.get("severity") or "").lower()
+        effective = props.get("effective")
+        expires = props.get("expires")
+        headline = props.get("headline")
+        description = props.get("description")
 
-        # 3) Current observation (latest)
-        current = None
-        if station_id:
-            obs_url = f"https://api.weather.gov/stations/{station_id}/observations/latest"
-            current = _nws_get_json(obs_url)
+        alerts.append(
+            {
+                "event": event,
+                "severity": severity,
+                "effective": effective,
+                "expires": expires,
+                "headline": headline,
+                "description": description,
+            }
+        )
+        has_weather_alert = True
 
-        # 4) Alerts (active)
-        alerts = _nws_get_json(alerts_url)
+        mapped = "none"
+        if severity == "minor":
+            mapped = "minor"
+        elif severity in ("moderate", "unknown"):
+            mapped = "moderate"
+        elif severity == "severe":
+            mapped = "severe"
+        elif severity == "extreme":
+            mapped = "extreme"
 
-        # 5) Optional: single forecast period text only (keep UI compatibility but avoid huge payload)
-        forecast = None
-        if forecast_url:
-            forecast = _nws_get_json(forecast_url)
-            fprops = (forecast or {}).get("properties") or {}
-            periods = fprops.get("periods") or []
-            if isinstance(periods, list) and len(periods) > 1:
-                fprops["periods"] = periods[:1]
-                forecast["properties"] = fprops
+        if sev_rank[mapped] > sev_rank[max_alert_severity]:
+            max_alert_severity = mapped
 
-        result = {
-            "meta": {"ok": True, "error": None},
-            "current": current,
-            "forecast": forecast,   # trimmed to 1 period max
-            "hourly": None,         # intentionally disabled (was too heavy/noisy)
-            "alerts": alerts,
-        }
-        _cache_set(_nws_weather_cache, key, result)
-        return result
-
-    except Exception as e:
-        err = f"{type(e).__name__}: {e}"
-        result = {
-            "meta": {"ok": False, "error": err},
-            "current": None,
-            "forecast": None,
-            "hourly": None,
-            "alerts": None,
-        }
-        _cache_set(_nws_weather_cache, key, result)
-        return result
+    out["alerts"] = alerts
+    out["has_weather_alert"] = has_weather_alert
+    out["max_alert_severity"] = max_alert_severity
+    return out
 
 
 # ----------------------------
-# Frontend static mount (local dev)
+# Frontend
 # ----------------------------
-FRONTEND_DIR = BASE_DIR.parent / "frontend"
-STATIC_DIR = FRONTEND_DIR / "static"
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+INDEX_PATH = STATIC_DIR / "index.html"
 
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
 def index():
-    idx = FRONTEND_DIR / "index.html"
-    if idx.exists():
-        return FileResponse(str(idx))
-    return JSONResponse({"ok": True, "message": "Frontend not found in this environment."})
+    return FileResponse(INDEX_PATH)
 
 
 # ----------------------------
-# Main API endpoint
+# API
 # ----------------------------
 @app.get("/api/status")
 def api_status(
-    request: Request,
-    site_id: Optional[str] = Query(default=None, max_length=128),
-    lat: Optional[float] = Query(default=None),
-    lon: Optional[float] = Query(default=None),
-    q: Optional[str] = Query(default=None, max_length=128),
-    query: Optional[str] = Query(default=None, max_length=128),
-    utility: Optional[str] = Query(default=None, max_length=16),
-):
-    # prefer explicit query param if both present
-    effective_q = query if query is not None else q
+    query: Optional[str] = Query(None, max_length=128, description="Site ID or lat,lon"),
+    q: Optional[str] = Query(None, max_length=128, description="Alias for 'query' (Site ID or lat,lon)"),
+    utility: Optional[str] = Query(
+        None,
+        max_length=16,
+        description="Optional utility/provider override (e.g., EVERGY, PSO, OGE, ONCOR). "
+        "If provided with lat,lon queries, probing is skipped.",
+    ),
+) -> Dict[str, Any]:
+    raw_in = (query if query is not None else q)
+    q_str = (raw_in or "").strip()
+    utility_override = (utility or "").strip().upper() or None
 
-    # utility override allowlist
-    utility_override = None
-    if utility:
-        u = utility.strip().upper()
-        if u in ALLOWED_UTILITIES:
-            utility_override = u
+    if utility_override and utility_override not in ALLOWED_UTILITIES:
+        msg = f"Invalid utility '{utility_override}'. Allowed: {', '.join(sorted(ALLOWED_UTILITIES))}"
+        return {
+            "query": raw_in,
+            "resolved": {"type": "unknown", "name": "", "site_id": None},
+            "provider": provider_info(None),
+            "weather": empty_weather(error=msg),
+            "power": empty_power(None, msg, ok=False),
+            "probe": None,
+        }
 
-    resolved: Dict[str, Any] = {"type": "unknown", "name": "", "site_id": None, "lat": None, "lon": None}
+    if not q_str:
+        return {
+            "query": raw_in,
+            "resolved": {"type": "unknown", "name": "", "site_id": None},
+            "provider": provider_info(None),
+            "weather": empty_weather(error="Missing query parameter. Provide ?query= or ?q="),
+            "power": empty_power(None, "Missing query parameter. Provide ?query= or ?q=", ok=False),
+            "probe": None,
+        }
 
-    # resolve input -> lat/lon
-    if site_id:
-        site = SITES.get(site_id)
-        if not site:
-            msg = "Unknown site_id"
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "query": effective_q,
-                    "resolved": resolved,
-                    "provider": provider_info(utility_override),
-                    "weather": empty_weather(error=msg),
-                    "power": empty_power(utility_override, msg, ok=False),
-                    "probe": None,
-                },
-            )
+    latlon = parse_latlon(q_str)
+
+    resolved: Dict[str, Any]
+    site_utility: Optional[str] = None
+
+    if latlon:
+        lat, lon = latlon
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            msg = "Invalid lat/lon range. Expected lat [-90..90], lon [-180..180]."
+            return {
+                "query": raw_in,
+                "resolved": {"type": "unknown", "name": q_str, "site_id": None},
+                "provider": provider_info(None),
+                "weather": empty_weather(error=msg),
+                "power": empty_power(None, msg, ok=False),
+                "probe": None,
+            }
+
+        site_utility = utility_override
         resolved = {
-            "type": "site_id",
-            "name": site.get("name") or "",
-            "site_id": site_id,
+            "type": "latlon",
+            "name": f"{lat:.7f}, {lon:.7f}",
+            "site_id": None,
+            "lat": lat,
+            "lon": lon,
+            "utility": site_utility,
+        }
+    else:
+        sid = q_str.upper()
+        site = SITES.get(sid)
+        if not site:
+            close = difflib.get_close_matches(sid, list(SITES.keys()), n=3, cutoff=0.6)
+            if close:
+                sid = close[0]
+                site = SITES.get(sid)
+
+        if not site:
+            return {
+                "query": raw_in,
+                "resolved": {"type": "unknown", "name": q_str, "site_id": None},
+                "provider": provider_info(None),
+                "weather": empty_weather(error="Site not found"),
+                "power": empty_power(None, "Site not found", ok=False),
+                "probe": None,
+            }
+
+        site_utility = site.get("utility")
+        resolved = {
+            "type": "site",
+            "name": site.get("name") or sid,
+            "site_id": sid,
+            "address": site.get("address"),
+            "city": site.get("city"),
+            "state": site.get("state"),
+            "zip": site.get("zip"),
             "lat": site.get("lat"),
             "lon": site.get("lon"),
+            "utility": site_utility,
         }
-        lat = to_float(site.get("lat"))
-        lon = to_float(site.get("lon"))
-        if not utility_override:
-            util = (site.get("utility") or "").strip().upper()
-            if util in ALLOWED_UTILITIES:
-                utility_override = util
 
-    elif lat is not None and lon is not None:
-        # range validation
-        if lat < -90.0 or lat > 90.0:
-            msg = "Invalid latitude range"
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "query": effective_q,
-                    "resolved": resolved,
-                    "provider": provider_info(utility_override),
-                    "weather": empty_weather(error=msg),
-                    "power": empty_power(utility_override, msg, ok=False),
-                    "probe": None,
-                },
-            )
-        if lon < -180.0 or lon > 180.0:
-            msg = "Invalid longitude range"
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "query": effective_q,
-                    "resolved": resolved,
-                    "provider": provider_info(utility_override),
-                    "weather": empty_weather(error=msg),
-                    "power": empty_power(utility_override, msg, ok=False),
-                    "probe": None,
-                },
-            )
+    lat = to_float(resolved.get("lat"))
+    lon = to_float(resolved.get("lon"))
+    if lat is None or lon is None:
+        return {
+            "query": raw_in,
+            "resolved": resolved,
+            "provider": provider_info(site_utility),
+            "weather": empty_weather(error="Missing latitude/longitude; weather lookup unavailable."),
+            "power": empty_power(site_utility, "Missing latitude/longitude; power lookup unavailable.", ok=False),
+            "probe": None,
+        }
 
-        resolved = {"type": "latlon", "name": "", "site_id": None, "lat": lat, "lon": lon}
+    probe_payload = None
+    power_obj: Any = None
+    attempts = []
 
-    elif effective_q:
-        # attempt parse "lat,lon" from q/query
-        ll = parse_latlon(effective_q)
-        if ll:
-            lat, lon = ll
-            if lat < -90.0 or lat > 90.0 or lon < -180.0 or lon > 180.0:
-                msg = "Invalid lat/lon range"
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "query": effective_q,
-                        "resolved": resolved,
-                        "provider": provider_info(utility_override),
-                        "weather": empty_weather(error=msg),
-                        "power": empty_power(utility_override, msg, ok=False),
-                        "probe": None,
-                    },
-                )
-            resolved = {"type": "latlon", "name": "", "site_id": None, "lat": lat, "lon": lon}
+    ex = ThreadPoolExecutor(max_workers=2)
+    try:
+        f_weather = ex.submit(fetch_weather, lat, lon)
+
+        if site_utility:
+            f_power = ex.submit(get_power_status, lat, lon, site_utility)
         else:
-            # fuzzy match against site names
+
+            def do_probe():
+                chosen, atts = probe_power_status(lat, lon)
+                return chosen, atts
+
+            f_power = ex.submit(do_probe)
+
+        try:
+            weather = f_weather.result(timeout=WEATHER_TOTAL_BUDGET_S)
+        except FuturesTimeout:
             try:
-                names = {sid: (SITES[sid].get("name") or "") for sid in SITES.keys()}
-                choices = list(names.values())
-                matches = difflib.get_close_matches(effective_q, choices, n=1, cutoff=0.5)
-                if matches:
-                    match_name = matches[0]
-                    match_sid = next((sid for sid, nm in names.items() if nm == match_name), None)
-                    if match_sid:
-                        site = SITES.get(match_sid) or {}
-                        resolved = {
-                            "type": "site_id",
-                            "name": site.get("name") or "",
-                            "site_id": match_sid,
-                            "lat": site.get("lat"),
-                            "lon": site.get("lon"),
-                        }
-                        lat = to_float(site.get("lat"))
-                        lon = to_float(site.get("lon"))
-                        if not utility_override:
-                            util = (site.get("utility") or "").strip().upper()
-                            if util in ALLOWED_UTILITIES:
-                                utility_override = util
+                f_weather.cancel()
             except Exception:
                 pass
-
-    if lat is None or lon is None:
-        msg = "Provide site_id or lat/lon"
-        return JSONResponse(
-            status_code=200,
-            content={
-                "query": effective_q,
-                "resolved": resolved,
-                "provider": provider_info(utility_override),
-                "weather": empty_weather(error=msg),
-                "power": empty_power(utility_override, msg, ok=False),
-                "probe": None,
-            },
-        )
-
-    # ----------------------------
-    # Execute weather + power with time budgets
-    # ----------------------------
-    resolved["lat"] = lat
-    resolved["lon"] = lon
-
-    def _call_weather() -> Dict[str, Any]:
-        return fetch_weather(lat, lon)
-
-    def _call_power() -> Dict[str, Any]:
-        return get_power_status(lat=lat, lon=lon, utility_override=utility_override)
-
-    def _call_probe() -> Dict[str, Any]:
-        return probe_power_status(lat=lat, lon=lon, utility_override=utility_override)
-
-    weather_payload: Dict[str, Any] = empty_weather(error="Weather unavailable")
-    power_payload: Dict[str, Any] = empty_power(utility_override, "Power unavailable", ok=False)
-    probe_payload: Optional[Dict[str, Any]] = None
-
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        wf = ex.submit(_call_weather)
-        pf = ex.submit(_call_power)
-        prf = ex.submit(_call_probe)
+            weather = empty_weather(error="Weather lookup timed out")
+        except Exception as e:
+            weather = empty_weather(error=f"Weather lookup failed: {type(e).__name__}: {e}")
 
         try:
-            weather_payload = wf.result(timeout=WEATHER_TOTAL_BUDGET_S)
+            if site_utility:
+                power_obj = f_power.result(timeout=POWER_TOTAL_BUDGET_S)
+                attempts = []
+            else:
+                power_obj, attempts = f_power.result(timeout=POWER_TOTAL_BUDGET_S)
         except FuturesTimeout:
-            weather_payload = empty_weather(error="Weather lookup timed out")
-        except Exception:
-            log.exception("Weather lookup failed")
-            weather_payload = empty_weather(error="Weather lookup failed")
-
+            try:
+                f_power.cancel()
+            except Exception:
+                pass
+            power_obj = _cached_power_on_timeout(resolved, site_utility)
+            attempts = []
+        except Exception as e:
+            power_obj = empty_power(site_utility, f"Power lookup failed: {type(e).__name__}: {e}", ok=False)
+            attempts = []
+    finally:
         try:
-            power_payload = pf.result(timeout=POWER_TOTAL_BUDGET_S)
-            _cache_power_if_ok(resolved, power_payload)
-        except FuturesTimeout:
-            power_payload = _cached_power_on_timeout(resolved, utility_override)
-        except Exception:
-            log.exception("Power lookup failed")
-            power_payload = empty_power(utility_override, "Power lookup failed", ok=False)
+            ex.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            ex.shutdown(wait=False)
 
-        try:
-            probe_payload = prf.result(timeout=POWER_TOTAL_BUDGET_S)
-        except FuturesTimeout:
-            probe_payload = None
-        except Exception:
-            log.exception("Probe failed")
-            probe_payload = None
+    power_payload = power_obj.model_dump() if hasattr(power_obj, "model_dump") else power_obj
+    _cache_power_if_ok(resolved, power_payload)
 
-    payload = {
-        "query": effective_q,
+    banner_utility = site_utility
+    if not banner_utility and isinstance(power_payload, dict):
+        banner_utility = (power_payload.get("utility") or None)
+
+    provider_banner = provider_info(banner_utility)
+
+    if not site_utility and attempts:
+        winner_utility = None
+        if isinstance(power_payload, dict) and power_payload.get("has_outage_nearby"):
+            winner_utility = power_payload.get("utility")
+
+        if isinstance(resolved, dict) and resolved.get("utility") is None and winner_utility:
+            resolved["utility"] = winner_utility
+
+        probe_payload = {
+            "mode": "probe",
+            "winner": winner_utility,
+            "attempts": [
+                {
+                    "provider": getattr(a, "utility", None),
+                    "ok": getattr(getattr(a, "meta", None), "ok", None),
+                    "error": getattr(getattr(a, "meta", None), "error", None),
+                    "has_outage_nearby": getattr(a, "has_outage_nearby", None),
+                    "nearest_distance_miles": (getattr(getattr(a, "nearest", None), "distance_miles", None)),
+                    "nearest_customers_out": (getattr(getattr(a, "nearest", None), "customers_out", None)),
+                }
+                for a in attempts
+            ],
+        }
+
+    return {
+        "query": raw_in,
         "resolved": resolved,
-        "provider": provider_info(utility_override),
-        "weather": weather_payload,
+        "provider": provider_banner,
+        "weather": weather,
         "power": power_payload,
         "probe": probe_payload,
     }
-    return JSONResponse(status_code=200, content=payload)
