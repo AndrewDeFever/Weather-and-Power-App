@@ -510,50 +510,68 @@ def api_status(
         resolved = {"type": "latlon", "name": "", "site_id": None, "lat": lat, "lon": lon}
 
     elif effective_q:
-        # attempt parse "lat,lon" from q/query
-        ll = parse_latlon(effective_q)
-        if ll:
-            lat, lon = ll
-            if lat < -90.0 or lat > 90.0 or lon < -180.0 or lon > 180.0:
-                msg = "Invalid lat/lon range"
-                return JSONResponse(
-                    status_code=200,
-                    content={
-                        "query": effective_q,
-                        "resolved": resolved,
-                        "provider": provider_info(utility_override),
-                        "weather": empty_weather(error=msg),
-                        "power": empty_power(utility_override, msg, ok=False),
-                        "probe": None,
-                    },
-                )
-            resolved = {"type": "latlon", "name": "", "site_id": None, "lat": lat, "lon": lon}
+        # IMPORTANT: Treat exact q matches as site_id first (prevents fuzzy mis-resolve like PSOTEST -> OGETEST)
+        sid = effective_q.strip()
+        if sid in SITES:
+            site = SITES.get(sid) or {}
+            resolved = {
+                "type": "site_id",
+                "name": site.get("name") or "",
+                "site_id": sid,
+                "lat": site.get("lat"),
+                "lon": site.get("lon"),
+            }
+            lat = to_float(site.get("lat"))
+            lon = to_float(site.get("lon"))
+            if not utility_override:
+                util = (site.get("utility") or "").strip().upper()
+                if util in ALLOWED_UTILITIES:
+                    utility_override = util
         else:
-            # fuzzy match against site names
-            try:
-                names = {sid: (SITES[sid].get("name") or "") for sid in SITES.keys()}
-                choices = list(names.values())
-                matches = difflib.get_close_matches(effective_q, choices, n=1, cutoff=0.5)
-                if matches:
-                    match_name = matches[0]
-                    match_sid = next((sid for sid, nm in names.items() if nm == match_name), None)
-                    if match_sid:
-                        site = SITES.get(match_sid) or {}
-                        resolved = {
-                            "type": "site_id",
-                            "name": site.get("name") or "",
-                            "site_id": match_sid,
-                            "lat": site.get("lat"),
-                            "lon": site.get("lon"),
-                        }
-                        lat = to_float(site.get("lat"))
-                        lon = to_float(site.get("lon"))
-                        if not utility_override:
-                            util = (site.get("utility") or "").strip().upper()
-                            if util in ALLOWED_UTILITIES:
-                                utility_override = util
-            except Exception:
-                pass
+            # attempt parse "lat,lon" from q/query
+            ll = parse_latlon(effective_q)
+            if ll:
+                lat, lon = ll
+                if lat < -90.0 or lat > 90.0 or lon < -180.0 or lon > 180.0:
+                    msg = "Invalid lat/lon range"
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "query": effective_q,
+                            "resolved": resolved,
+                            "provider": provider_info(utility_override),
+                            "weather": empty_weather(error=msg),
+                            "power": empty_power(utility_override, msg, ok=False),
+                            "probe": None,
+                        },
+                    )
+                resolved = {"type": "latlon", "name": "", "site_id": None, "lat": lat, "lon": lon}
+            else:
+                # fuzzy match against site names
+                try:
+                    names = {sid: (SITES[sid].get("name") or "") for sid in SITES.keys()}
+                    choices = list(names.values())
+                    matches = difflib.get_close_matches(effective_q, choices, n=1, cutoff=0.5)
+                    if matches:
+                        match_name = matches[0]
+                        match_sid = next((sid for sid, nm in names.items() if nm == match_name), None)
+                        if match_sid:
+                            site = SITES.get(match_sid) or {}
+                            resolved = {
+                                "type": "site_id",
+                                "name": site.get("name") or "",
+                                "site_id": match_sid,
+                                "lat": site.get("lat"),
+                                "lon": site.get("lon"),
+                            }
+                            lat = to_float(site.get("lat"))
+                            lon = to_float(site.get("lon"))
+                            if not utility_override:
+                                util = (site.get("utility") or "").strip().upper()
+                                if util in ALLOWED_UTILITIES:
+                                    utility_override = util
+                except Exception:
+                    pass
 
     if lat is None or lon is None:
         msg = "Provide site_id or lat/lon"
