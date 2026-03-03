@@ -24,8 +24,6 @@ app = FastAPI(title="Weather & Power Status", version="0.8.2")
 # ----------------------------
 # Security headers (browser + API hardening)
 # ----------------------------
-# Conservative CSP: should work with your current local JS/CSS and same-origin API calls.
-# If you later add third-party assets, you'll need to adjust the directives.
 CSP = (
     "default-src 'self'; "
     "img-src 'self' data:; "
@@ -37,7 +35,6 @@ CSP = (
 )
 
 # Only enable HSTS if the app is served exclusively over HTTPS in production.
-# If you ever serve HTTP, HSTS can cause confusing behavior.
 HSTS = "max-age=31536000; includeSubDomains"
 
 
@@ -50,8 +47,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
         response.headers["Content-Security-Policy"] = CSP
-
-        # Comment out if not guaranteed HTTPS end-to-end.
         response.headers["Strict-Transport-Security"] = HSTS
 
         return response
@@ -60,15 +55,82 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 # ----------------------------
+# Rate limiting (token bucket, per client IP)
+# ----------------------------
+# Defaults: allow short bursts while limiting sustained abuse.
+# - Burst: 30 requests immediately
+# - Sustained: 60 requests per minute (1/sec)
+RL_BURST = 30
+RL_PER_MIN = 60.0
+_rl_refill_per_sec = RL_PER_MIN / 60.0
+
+# key -> {"tokens": float, "ts": float}
+_rl_buckets: Dict[str, Dict[str, float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    # If behind CloudFront/API GW, X-Forwarded-For is typically present.
+    # Use the first IP in the list (original client).
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _rate_limit_allow(key: str) -> bool:
+    now = time.time()
+    b = _rl_buckets.get(key)
+    if not b:
+        _rl_buckets[key] = {"tokens": float(RL_BURST - 1), "ts": now}
+        return True
+
+    tokens = float(b.get("tokens", RL_BURST))
+    last = float(b.get("ts", now))
+
+    # refill
+    tokens = min(float(RL_BURST), tokens + (now - last) * _rl_refill_per_sec)
+
+    if tokens < 1.0:
+        b["tokens"] = tokens
+        b["ts"] = now
+        return False
+
+    b["tokens"] = tokens - 1.0
+    b["ts"] = now
+    return True
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Only rate limit API endpoints (leave static/index alone).
+        if request.url.path.startswith("/api/"):
+            ip = _client_ip(request)
+            if not _rate_limit_allow(ip):
+                # Keep response shape compatible + HTTP 200 (can tighten later).
+                msg = "Rate limit exceeded. Please retry shortly."
+                payload = {
+                    "query": None,
+                    "resolved": {"type": "unknown", "name": "", "site_id": None},
+                    "provider": provider_info(None),
+                    "weather": empty_weather(error=msg),
+                    "power": empty_power(None, msg, ok=False),
+                    "probe": None,
+                }
+                return JSONResponse(status_code=200, content=payload)
+
+        return await call_next(request)
+
+
+# Add rate limiter AFTER security headers (either order is fine)
+app.add_middleware(RateLimitMiddleware)
+
+# ----------------------------
 # Global error handling (guarantee JSON responses)
 # ----------------------------
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
-    # Never let an exception bubble into an HTML 500 page.
-    # Keep response shape backward compatible (do not remove fields).
-    #
-    # SECURITY: Do NOT leak internal exception details to clients (audit finding).
-    # Log full exception server-side instead.
     log.exception("Unhandled exception path=%s", request.url.path)
 
     err_client = "Internal server error"
@@ -80,7 +142,6 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
         "power": empty_power(None, err_client, ok=False),
         "probe": None,
     }
-    # Keep HTTP 200 to preserve current client expectations (we can tighten later).
     return JSONResponse(status_code=200, content=payload)
 
 
@@ -88,26 +149,18 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 # Budgets / timeouts (keep under CloudFront/origin timeouts)
 # ----------------------------
 WEATHER_TOTAL_BUDGET_S = 8.0
-
-# Increased slightly to allow more work while still staying under your ~15s end-to-end SLA.
-# Note: If provider calls exceed this, we will serve cached power if available.
 POWER_TOTAL_BUDGET_S = 14.0
-
-# Per-request HTTP timeouts (connect+read). Keep these smaller than the total budget.
 HTTP_TIMEOUT_S = 5.0
 
 
 # ----------------------------
 # Power cache (best-effort fallback on timeouts)
 # ----------------------------
-# Goal: if a live power lookup times out (common for some providers),
-# return last-known-good power payload instead of empty timeouts.
 POWER_CACHE_TTL_S = 120  # seconds
 _power_cache: Dict[str, Dict[str, Any]] = {}  # key -> {"ts": float, "payload": dict}
 
 
 def _power_cache_key(resolved: Dict[str, Any]) -> str:
-    # Prefer stable site_id when available; otherwise bucket by rounded lat/lon.
     sid = resolved.get("site_id")
     if sid:
         return f"site:{sid}"
@@ -126,15 +179,10 @@ def _cache_power_if_ok(resolved: Dict[str, Any], power_payload: Any) -> None:
         if isinstance(meta, dict) and meta.get("ok") is True:
             _power_cache[_power_cache_key(resolved)] = {"ts": time.time(), "payload": power_payload}
     except Exception:
-        # Never allow cache logic to break the endpoint
         pass
 
 
 def _cached_power_on_timeout(resolved: Dict[str, Any], site_utility: Optional[str]) -> Dict[str, Any]:
-    """
-    Return cached power payload if available and fresh enough, otherwise an empty_power() timeout response.
-    Adds non-breaking meta fields: cached, cache_age_s.
-    """
     try:
         key = _power_cache_key(resolved)
         cached = _power_cache.get(key)
@@ -143,7 +191,6 @@ def _cached_power_on_timeout(resolved: Dict[str, Any], site_utility: Optional[st
             if age <= POWER_CACHE_TTL_S:
                 payload = cached.get("payload")
                 if isinstance(payload, dict):
-                    # Annotate meta without removing any existing fields
                     meta = payload.get("meta")
                     if not isinstance(meta, dict):
                         meta = {}
@@ -235,7 +282,6 @@ def provider_info(utility: Optional[str]) -> Dict[str, Any]:
 
 
 def empty_weather(error: Optional[str] = None) -> Dict[str, Any]:
-    # Backward compatible keys + new NOC keys
     w: Dict[str, Any] = {
         "temperature_f": None,
         "condition": None,
@@ -248,10 +294,10 @@ def empty_weather(error: Optional[str] = None) -> Dict[str, Any]:
         "heat_index_f": None,
         "observation_time": None,
         "station_id": None,
-        "temp_kind": None,  # observed | forecast_fallback | None
-        "temp_source": None,  # NWS_OBSERVATION | NWS_FORECAST | None
-        "temp_source_url": None,  # endpoint actually used
-        "detailedForecast": None,  # full text, suitable for expandable UI
+        "temp_kind": None,
+        "temp_source": None,
+        "temp_source_url": None,
+        "detailedForecast": None,
         "has_weather_alert": False,
         "max_alert_severity": "none",
         "alerts": [],
@@ -340,7 +386,6 @@ DEFAULT_HEADERS = {
 
 
 def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
-    # Step 1: points lookup
     points_url = NWS_POINTS.format(lat=lat, lon=lon)
     r = requests.get(points_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
     r.raise_for_status()
@@ -351,7 +396,6 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     forecast_url = props.get("forecast")
     forecast_hourly_url = props.get("forecastHourly")
 
-    # Step 2: stations list (best effort)
     station_id = None
     if stations_url:
         try:
@@ -364,7 +408,6 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
         except Exception:
             station_id = None
 
-    # Step 3: observation (best effort). If it fails, fallback to forecast for temp/condition.
     out = empty_weather()
     out["temp_source_url"] = None
 
@@ -383,7 +426,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
                 out["temp_source"] = "NWS_OBSERVATION"
             out["station_id"] = station_id
             out["observation_time"] = oprops.get("timestamp")
-            # winds
+
             wspd = (oprops.get("windSpeed") or {}).get("value")
             wgst = (oprops.get("windGust") or {}).get("value")
             wdir = (oprops.get("windDirection") or {}).get("value")
@@ -394,23 +437,22 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
             if isinstance(wdir, (int, float)):
                 out["wind_direction_deg"] = float(wdir)
                 out["wind_direction_cardinal"] = deg_to_cardinal(float(wdir))
-            # precip
+
             p = (oprops.get("precipitationLastHour") or {}).get("value")
             if isinstance(p, (int, float)):
                 out["precip_last_hour_in"] = round(mm_to_in(float(p)), 3)
-            # wind chill / heat index
+
             wc = (oprops.get("windChill") or {}).get("value")
             hi = (oprops.get("heatIndex") or {}).get("value")
             if isinstance(wc, (int, float)):
                 out["wind_chill_f"] = round(c_to_f(float(wc)), 1)
             if isinstance(hi, (int, float)):
                 out["heat_index_f"] = round(c_to_f(float(hi)), 1)
-            # condition
+
             out["condition"] = oprops.get("textDescription")
         except Exception:
             pass
 
-    # Step 4: forecast fallback for temp/condition (best effort)
     if out.get("temperature_f") is None and forecast_url:
         try:
             rf = requests.get(forecast_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
@@ -430,7 +472,6 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # Step 5: alerts (best effort)
     alerts_url = NWS_ALERTS.format(lat=lat, lon=lon)
     try:
         ra = requests.get(alerts_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
@@ -443,7 +484,6 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     alerts = []
     max_alert_severity = "none"
     has_weather_alert = False
-
     sev_rank = {"none": 0, "minor": 1, "moderate": 2, "severe": 3, "extreme": 4}
 
     for f in feats:
@@ -466,7 +506,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
             }
         )
         has_weather_alert = True
-        # Map NWS severity words to our banner values
+
         mapped = "none"
         if severity == "minor":
             mapped = "minor"
@@ -483,7 +523,6 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     out["alerts"] = alerts
     out["has_weather_alert"] = has_weather_alert
     out["max_alert_severity"] = max_alert_severity
-
     return out
 
 
@@ -520,7 +559,6 @@ def api_status(
     q_str = (raw_in or "").strip()
     utility_override = (utility or "").strip().upper() or None
 
-    # Validate utility override (only applies to the override param, not sites.json values)
     if utility_override and utility_override not in ALLOWED_UTILITIES:
         msg = f"Invalid utility '{utility_override}'. Allowed: {', '.join(sorted(ALLOWED_UTILITIES))}"
         return {
@@ -549,8 +587,6 @@ def api_status(
 
     if latlon:
         lat, lon = latlon
-
-        # Range validation (audit-friendly input validation)
         if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
             msg = "Invalid lat/lon range. Expected lat [-90..90], lon [-180..180]."
             return {
@@ -562,7 +598,6 @@ def api_status(
                 "probe": None,
             }
 
-        # If frontend supplies utility, skip probe.
         site_utility = utility_override
         resolved = {
             "type": "latlon",
@@ -621,13 +656,11 @@ def api_status(
     power_obj: Any = None
     attempts = []
 
-    # Run in parallel but NEVER allow the request to exceed CloudFront/origin timeouts.
     ex = ThreadPoolExecutor(max_workers=2)
     try:
         f_weather = ex.submit(fetch_weather, lat, lon)
 
         if site_utility:
-            # Deterministic: no probe, call the chosen provider directly.
             f_power = ex.submit(get_power_status, lat, lon, site_utility)
         else:
 
@@ -637,7 +670,6 @@ def api_status(
 
             f_power = ex.submit(do_probe)
 
-        # Weather: best-effort under budget (always return JSON)
         try:
             weather = f_weather.result(timeout=WEATHER_TOTAL_BUDGET_S)
         except FuturesTimeout:
@@ -649,7 +681,6 @@ def api_status(
         except Exception as e:
             weather = empty_weather(error=f"Weather lookup failed: {type(e).__name__}: {e}")
 
-        # Power: best-effort under budget (always return JSON)
         try:
             if site_utility:
                 power_obj = f_power.result(timeout=POWER_TOTAL_BUDGET_S)
@@ -661,39 +692,31 @@ def api_status(
                 f_power.cancel()
             except Exception:
                 pass
-            # FIX: correct function name (_cached_power_on_timeout)
             power_obj = _cached_power_on_timeout(resolved, site_utility)
             attempts = []
         except Exception as e:
             power_obj = empty_power(site_utility, f"Power lookup failed: {type(e).__name__}: {e}", ok=False)
             attempts = []
     finally:
-        # Never block shutdown; timed-out provider threads may still be running.
         try:
             ex.shutdown(wait=False, cancel_futures=True)
         except TypeError:
             ex.shutdown(wait=False)
 
-    # Normalize power object to dict
     power_payload = power_obj.model_dump() if hasattr(power_obj, "model_dump") else power_obj
-
-    # Cache successful power payloads (best-effort, never breaks endpoint)
     _cache_power_if_ok(resolved, power_payload)
 
-    # Provider banner: if probed, show the chosen utility when available
     banner_utility = site_utility
     if not banner_utility and isinstance(power_payload, dict):
         banner_utility = (power_payload.get("utility") or None)
 
     provider_banner = provider_info(banner_utility)
 
-    # Probe payload (only when probing)
     if not site_utility and attempts:
         winner_utility = None
         if isinstance(power_payload, dict) and power_payload.get("has_outage_nearby"):
             winner_utility = power_payload.get("utility")
 
-        # Make resolved.utility informative for lat/lon probe cases (non-breaking)
         if isinstance(resolved, dict) and resolved.get("utility") is None and winner_utility:
             resolved["utility"] = winner_utility
 
