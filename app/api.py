@@ -12,12 +12,52 @@ import requests
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 from app.power_router import get_power_status, probe_power_status
 
 log = logging.getLogger("wnp")
 
 app = FastAPI(title="Weather & Power Status", version="0.8.2")
+
+# ----------------------------
+# Security headers (browser + API hardening)
+# ----------------------------
+# Conservative CSP: should work with your current local JS/CSS and same-origin API calls.
+# If you later add third-party assets, you'll need to adjust the directives.
+CSP = (
+    "default-src 'self'; "
+    "img-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self'; "
+    "connect-src 'self'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'"
+)
+
+# Only enable HSTS if the app is served exclusively over HTTPS in production.
+# If you ever serve HTTP, HSTS can cause confusing behavior.
+HSTS = "max-age=31536000; includeSubDomains"
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response: Response = await call_next(request)
+
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Content-Security-Policy"] = CSP
+
+        # Comment out if not guaranteed HTTPS end-to-end.
+        response.headers["Strict-Transport-Security"] = HSTS
+
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ----------------------------
 # Global error handling (guarantee JSON responses)
