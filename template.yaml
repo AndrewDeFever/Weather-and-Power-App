@@ -13,6 +13,9 @@ Resources:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: prod
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 5
+        ThrottlingBurstLimit: 10
 
   BackendFunction:
     Type: AWS::Serverless::Function
