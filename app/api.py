@@ -156,8 +156,15 @@ HTTP_TIMEOUT_S = 5.0
 # ----------------------------
 # Power cache (best-effort fallback on timeouts)
 # ----------------------------
-POWER_CACHE_TTL_S = 120  # seconds
+POWER_CACHE_TTL_S = int(os.getenv("POWER_CACHE_TTL_S", "300"))  # seconds (default 5 min)
 _power_cache: Dict[str, Dict[str, Any]] = {}  # key -> {"ts": float, "payload": dict}
+
+# Weather cache (in-memory, per Lambda container).
+# Purpose: prevent repeated NWS hits when UI/users refresh quickly.
+_weather_cache: Dict[str, Dict[str, Any]] = {}  # key -> {"ts": float, "payload": dict}
+WEATHER_CACHE_TTL_S = int(os.getenv("WEATHER_CACHE_TTL_S", "300"))  # 5 minutes default
+STATUS_CACHE_TTL_S = int(os.getenv("STATUS_CACHE_TTL_S", "300"))  # response cache hint (seconds)
+
 
 
 def _power_cache_key(resolved: Dict[str, Any]) -> str:
@@ -386,6 +393,13 @@ DEFAULT_HEADERS = {
 
 
 def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
+    # Cache key: round coords to reduce cardinality (good enough for ops).
+    key = f"{lat:.4f},{lon:.4f}"
+    now = time.time()
+    cached = _weather_cache.get(key)
+    if cached and (now - float(cached.get('ts', 0.0)) < WEATHER_CACHE_TTL_S):
+        return cached['payload']
+
     points_url = NWS_POINTS.format(lat=lat, lon=lon)
     r = requests.get(points_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
     r.raise_for_status()
@@ -453,7 +467,8 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
         except Exception:
             pass
 
-    if out.get("temperature_f") is None and forecast_url:
+    # Always try to include the point-in-time detailed forecast (period[0]) if available.
+    if forecast_url and out.get("detailedForecast") is None:
         try:
             rf = requests.get(forecast_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
             rf.raise_for_status()
@@ -462,7 +477,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
             if periods and isinstance(periods, list):
                 p0 = periods[0] or {}
                 t = p0.get("temperature")
-                if isinstance(t, (int, float)):
+                if out.get("temperature_f") is None and isinstance(t, (int, float)):
                     out["temperature_f"] = float(t)
                     out["temp_kind"] = "forecast_fallback"
                     out["temp_source"] = "NWS_FORECAST"
@@ -523,6 +538,8 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     out["alerts"] = alerts
     out["has_weather_alert"] = has_weather_alert
     out["max_alert_severity"] = max_alert_severity
+    # store in cache
+    _weather_cache[key] = {"ts": now, "payload": out}
     return out
 
 
@@ -546,6 +563,7 @@ def index():
 # ----------------------------
 @app.get("/api/status")
 def api_status(
+    response: Response,
     query: Optional[str] = Query(None, max_length=128, description="Site ID or lat,lon"),
     q: Optional[str] = Query(None, max_length=128, description="Alias for 'query' (Site ID or lat,lon)"),
     utility: Optional[str] = Query(
@@ -555,6 +573,9 @@ def api_status(
         "If provided with lat,lon queries, probing is skipped.",
     ),
 ) -> Dict[str, Any]:
+    # Hint to caches (browser/CDN). Client can bypass with ?cb=... but server-side caches still protect NWS.
+    response.headers["Cache-Control"] = f"public, max-age={STATUS_CACHE_TTL_S}"
+
     raw_in = (query if query is not None else q)
     q_str = (raw_in or "").strip()
     utility_override = (utility or "").strip().upper() or None
@@ -588,6 +609,8 @@ def api_status(
     if latlon:
         lat, lon = latlon
         if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+
+
             msg = "Invalid lat/lon range. Expected lat [-90..90], lon [-180..180]."
             return {
                 "query": raw_in,
