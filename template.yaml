@@ -14,8 +14,8 @@ Resources:
     Properties:
       StageName: prod
       DefaultRouteSettings:
-        ThrottlingRateLimit: 2
-        ThrottlingBurstLimit: 5
+        ThrottlingRateLimit: 4
+        ThrottlingBurstLimit: 8
 
   BackendFunction:
     Type: AWS::Serverless::Function
