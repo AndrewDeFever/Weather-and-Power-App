@@ -27,6 +27,8 @@ import mercantile
 import polyline
 import requests
 
+from app.netguard import limited_get
+
 # -------------------------- OG&E IDENTIFIERS --------------------------
 
 BASE_URL = "https://kubra.io/"
@@ -268,7 +270,7 @@ class OgeKubraClient:
             print(f"FETCH z={zoom} q={quadkey} -> {url}", flush=True)
 
         try:
-            r = self.session.get(url, timeout=TILE_TIMEOUT_S)
+            r = limited_get(self.session, url, timeout=TILE_TIMEOUT_S)
         except requests.RequestException:
             return [], True
 
@@ -354,7 +356,7 @@ class OgeKubraClient:
             f"{BASE_URL}stormcenter/api/v1/stormcenters/"
             f"{INSTANCE_ID}/views/{VIEW_ID}/currentState?preview=false"
         )
-        r = self.session.get(url, timeout=META_TIMEOUT_S)
+        r = limited_get(self.session, url, timeout=META_TIMEOUT_S)
         r.raise_for_status()
         return r.json()
 

@@ -46,6 +46,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import requests
 
+from app.netguard import limited_get
+
 
 # ----------------------------
 # Controlled exception
@@ -158,7 +160,7 @@ def _http_get_json(
     debug: bool = False,
 ) -> Any:
     try:
-        resp = session.get(url, timeout=timeout)
+        resp = limited_get(session, url, timeout=timeout)
     except requests.RequestException as e:
         raise OncorKubraError(f"Request failed: {url}: {e}") from e
 

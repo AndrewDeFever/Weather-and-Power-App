@@ -51,6 +51,8 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import requests
 
+from app.netguard import limited_get
+
 logger = logging.getLogger(__name__)
 
 # -----------------------------
@@ -131,7 +133,7 @@ def _session() -> requests.Session:
 def _get_text(s: requests.Session, url: str, debug: bool = False) -> str:
     if debug:
         print(f"GET {url}")
-    r = s.get(url, timeout=REQUEST_TIMEOUT)
+    r = limited_get(s, url, timeout=REQUEST_TIMEOUT)
     r.raise_for_status()
     return r.text
 
@@ -139,7 +141,7 @@ def _get_text(s: requests.Session, url: str, debug: bool = False) -> str:
 def _get_json(s: requests.Session, url: str, debug: bool = False) -> Any:
     if debug:
         print(f"GET {url}")
-    r = s.get(url, timeout=REQUEST_TIMEOUT)
+    r = limited_get(s, url, timeout=REQUEST_TIMEOUT)
     r.raise_for_status()
     return r.json()
 
@@ -553,7 +555,7 @@ def discover_tile_scheme(
                     print(f"   {url}")
 
                 try:
-                    r = s.get(url, timeout=REQUEST_TIMEOUT)
+                    r = limited_get(s, url, timeout=REQUEST_TIMEOUT)
                     last_status = r.status_code
                     if r.status_code != 200:
                         continue
@@ -648,7 +650,7 @@ def fetch_tile_records(
     if debug:
         print(f"FETCH {url}")
     try:
-        r = s.get(url, timeout=REQUEST_TIMEOUT)
+        r = limited_get(s, url, timeout=REQUEST_TIMEOUT)
         if r.status_code != 200:
             return []
         j = r.json()

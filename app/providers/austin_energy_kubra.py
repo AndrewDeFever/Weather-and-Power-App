@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from app.netguard import limited_get
+
 # ============================================================
 # Austin Energy (Kubra) provider with sanity gate + full tiles
 # ============================================================
@@ -331,7 +333,7 @@ def _save_cached_state_uuid(state_uuid: str) -> None:
 def _http_get_json(session: requests.Session, url: str, debug: bool, timeout: float = 10.0) -> Optional[dict]:
     _dbg(debug, f"PROBE GET {url}")
     try:
-        r = session.get(url, headers=DEFAULT_HEADERS, timeout=timeout)
+        r = limited_get(session, url, headers=DEFAULT_HEADERS, timeout=timeout)
     except Exception as e:
         _dbg(debug, f"PROBE FAIL {url} exc={type(e).__name__}")
         return None
