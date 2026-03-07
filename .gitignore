@@ -21,7 +21,3 @@ Thumbs.db
 # Secrets / temp
 .env
 .env.*
-
-# Proprietary site data (DO NOT COMMIT)
-app/data/sites_*.json
-app/data/sites*.json
