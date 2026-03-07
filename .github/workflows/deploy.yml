@@ -106,9 +106,9 @@ jobs:
       - name: "SAM Deploy"
         run: |
           sam deploy \
-            --stack-name weather-power-status \
-            --region us-east-1 \
-            --s3-bucket weathernpowerapp \
+            --stack-name "${STACK_NAME}"
+            --region "${AWS_REGION}"
+            --s3-bucket "${SAM_DEPLOY_BUCKET}"
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --role-arn "${{ secrets.CFN_EXEC_ROLE_ARN }}"
             --no-confirm-changeset \
