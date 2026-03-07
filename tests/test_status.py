@@ -20,7 +20,7 @@ def test_api_status_returns_json_and_is_resilient(monkeypatch):
 
     client = TestClient(api_mod.app)
 
-    r = client.get("/api/status?q=PSOTEST")
+    r = client.get("/api/status?q=TULSATEST")
     assert r.status_code == 200
     assert r.headers.get("content-type", "").startswith("application/json")
     data = r.json()
@@ -42,7 +42,7 @@ def test_api_status_wraps_provider_exceptions(monkeypatch):
     monkeypatch.setattr(api_mod, "get_power_status", boom_power)
 
     client = TestClient(api_mod.app)
-    r = client.get("/api/status?q=PSOTEST")
+    r = client.get("/api/status?q=TULSATEST")
     assert r.status_code == 200
     assert r.headers.get("content-type", "").startswith("application/json")
     data = r.json()
