@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import requests
+
+from app.netguard import limited_requests_get
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -402,7 +404,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
         return cached['payload']
 
     points_url = NWS_POINTS.format(lat=lat, lon=lon)
-    r = requests.get(points_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+    r = limited_requests_get(points_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
     r.raise_for_status()
     pts = r.json()
 
@@ -414,7 +416,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     station_id = None
     if stations_url:
         try:
-            rs = requests.get(stations_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+            rs = limited_requests_get(stations_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
             rs.raise_for_status()
             st = rs.json()
             feats = st.get("features") or []
@@ -430,7 +432,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
         obs_url = NWS_OBSERVATION.format(station=station_id)
         out["temp_source_url"] = obs_url
         try:
-            ro = requests.get(obs_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+            ro = limited_requests_get(obs_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
             ro.raise_for_status()
             obs = ro.json()
             oprops = (obs.get("properties") or {})
@@ -471,7 +473,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     # Always try to include the point-in-time detailed forecast (period[0]) if available.
     if forecast_url and out.get("detailedForecast") is None:
         try:
-            rf = requests.get(forecast_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+            rf = limited_requests_get(forecast_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
             rf.raise_for_status()
             fc = rf.json()
             periods = ((fc.get("properties") or {}).get("periods") or [])
@@ -490,7 +492,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
 
     alerts_url = NWS_ALERTS.format(lat=lat, lon=lon)
     try:
-        ra = requests.get(alerts_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
+        ra = limited_requests_get(alerts_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S)
         ra.raise_for_status()
         aj = ra.json()
         feats = aj.get("features") or []
