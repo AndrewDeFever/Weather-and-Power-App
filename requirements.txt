@@ -1,8 +1,8 @@
-fastapi
-starlette
-pydantic
-mangum
-requests
-mercantile
-polyline
-uvicorn
+fastapi==0.111.0
+starlette==0.37.2
+pydantic==2.12.5
+mangum==0.21.0
+requests==2.32.5
+mercantile==1.2.1
+polyline==2.0.4
+uvicorn==0.40.0
