@@ -3,8 +3,8 @@ from __future__ import annotations
 import difflib
 import json
 import logging
-import time
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
