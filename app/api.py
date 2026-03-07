@@ -549,16 +549,17 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
 # ----------------------------
 # Frontend
 # ----------------------------
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
-INDEX_PATH = STATIC_DIR / "index.html"
+BASE_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = BASE_DIR / "frontend"
+STATIC_DIR = FRONTEND_DIR / "static"
+INDEX_PATH = FRONTEND_DIR / "index.html"
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
 def index():
-    return FileResponse(INDEX_PATH)
+    return FileResponse(str(INDEX_PATH))
 
 
 # ----------------------------
