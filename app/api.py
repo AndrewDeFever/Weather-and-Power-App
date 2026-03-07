@@ -13,8 +13,7 @@ import requests
 
 from app.netguard import limited_requests_get
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
@@ -544,22 +543,6 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     # store in cache
     _weather_cache[key] = {"ts": now, "payload": out}
     return out
-
-
-# ----------------------------
-# Frontend
-# ----------------------------
-BASE_DIR = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = BASE_DIR / "frontend"
-STATIC_DIR = FRONTEND_DIR / "static"
-INDEX_PATH = FRONTEND_DIR / "index.html"
-
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
-@app.get("/")
-def index():
-    return FileResponse(str(INDEX_PATH))
 
 
 # ----------------------------
