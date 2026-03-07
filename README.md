@@ -4,8 +4,8 @@ A serverless weather and power situational-awareness app built to support operat
 
 This project was created for two reasons:
 
-1. to give my co-workers a fast, practical way to check weather and outage context in one place  
-2. to demonstrate AWS and serverless application design in a real-world use case
+1. To give my co-workers a fast, practical way to check weather and outage context in one place.
+2. To demonstrate AWS and serverless application design in a real-world use case.
 
 ## Overview
 
@@ -50,7 +50,7 @@ The repo includes demo/test site IDs for quick validation:
 ## Architecture
 
 ### Frontend
-- Static frontend hosted separately
+- static frontend hosted separately
 - Amazon S3
 - Amazon CloudFront
 
@@ -62,7 +62,7 @@ The repo includes demo/test site IDs for quick validation:
 
 ### External Data Sources
 - National Weather Service / weather.gov
-- Utility outage provider endpoints
+- utility outage provider endpoints
 
 ## Security / Hardening Highlights
 
@@ -85,3 +85,50 @@ Install dependencies:
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
+```
+
+Run tests:
+
+```bash
+PYTHONPATH=. pytest -q tests
+```
+
+Run locally (example):
+
+```bash
+uvicorn app.api:app --reload
+```
+
+## Deployment
+
+This project is deployed as a serverless application using AWS SAM and GitHub Actions.
+
+High-level deployment flow:
+
+- code pushed to GitHub
+- GitHub Actions runs tests and validation
+- backend deploys through SAM
+- frontend assets deploy to S3
+- CloudFront serves the frontend and routes API traffic appropriately
+
+## Notes
+
+- provider latency can vary during severe weather events
+- outage accuracy and restoration estimates depend on third-party provider data
+- some provider paths warm up faster than others due to caching behavior
+- API throttling and fallback behavior are intentional protections
+
+## Purpose as a Portfolio Project
+
+This repo is intended to show practical AWS and application engineering skills, including:
+
+- serverless API design
+- frontend/backend separation
+- deployment automation
+- operational resiliency thinking
+- security-minded hardening
+- debugging and performance testing under realistic conditions
+
+## License
+
+GPL-3.0
