@@ -40,11 +40,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Audit Python dependencies
-        run: |
-          python -m pip install --upgrade pip pip-audit
-          pip-audit --no-deps -r requirements.txt -r requirements-dev.txt
-
       - name: "Install dependencies (checks)"
         run: |
           python -m pip install --upgrade pip
@@ -60,6 +55,15 @@ jobs:
       - name: "Run tests"
         run: |
           PYTHONPATH=. pytest -q tests
+
+      - name: "Audit Python dependencies"
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          # Temporary ignore: FastAPI currently constrains Starlette below the fixed version
+          # for CVE-2025-62727. The backend no longer serves StaticFiles/FileResponse;
+          # frontend is served separately from S3/CloudFront. Revisit when FastAPI supports
+          # Starlette >= 0.49.1.
+          pip-audit --no-deps --ignore-vuln CVE-2025-62727 -r requirements.txt -r requirements-dev.txt
 
       - name: "Install AWS SAM CLI"
         uses: aws-actions/setup-sam@v2
