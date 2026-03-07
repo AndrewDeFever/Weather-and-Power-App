@@ -15,6 +15,10 @@ permissions:
 
 env:
   SAM_CLI_TELEMETRY: "0"
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  STACK_NAME: ${{ vars.STACK_NAME }}
+  SAM_DEPLOY_BUCKET: ${{ vars.SAM_DEPLOY_BUCKET }}
+  FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
 
 jobs:
   deploy:
@@ -106,7 +110,7 @@ jobs:
             --region us-east-1 \
             --s3-bucket weathernpowerapp \
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-            --role-arn arn:aws:iam::042889969210:role/weather-power-status-cfn-exec \
+            --role-arn "${{ secrets.CFN_EXEC_ROLE_ARN }}"
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --debug
