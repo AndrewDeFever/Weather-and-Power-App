@@ -115,7 +115,7 @@ jobs:
             --no-fail-on-empty-changeset \
             --debug
 
-      # --- Deploy frontend to S3 (wnp.subrealstudios.com) ---
+      # --- Deploy frontend to S3 (${FRONTEND_BUCKET}) ---
       # Expects these files to exist in the repo:
       #   frontend/index.html
       #   frontend/static/app.js
@@ -123,7 +123,7 @@ jobs:
       - name: "Deploy frontend (S3 static website)"
         shell: bash
         env:
-          FRONTEND_BUCKET: wnp.subrealstudios.com
+          FRONTEND_BUCKET: ${FRONTEND_BUCKET}
         run: |
           set -euo pipefail
 
