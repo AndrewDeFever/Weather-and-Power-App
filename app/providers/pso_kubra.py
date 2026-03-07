@@ -31,8 +31,6 @@ from zoneinfo import ZoneInfo
 from typing import List, Dict, Any, Optional, Tuple, Set
 
 import requests
-
-from app.netguard import limited_get
 import mercantile
 import polyline
 
@@ -96,13 +94,13 @@ def _session() -> requests.Session:
     return s
 
 def _get_text(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[str]:
-    r = limited_get(s, url, timeout=timeout)
+    r = s.get(url, timeout=timeout)
     if r.status_code != 200:
         return None
     return r.text
 
 def _get_json(s: requests.Session, url: str, timeout: float = 15.0) -> Optional[Dict[str, Any]]:
-    r = limited_get(s, url, timeout=timeout)
+    r = s.get(url, timeout=timeout)
     if r.status_code != 200:
         return None
     try:
