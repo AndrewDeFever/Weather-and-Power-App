@@ -1,153 +1,198 @@
-# Weather-and-Power-App
+# Weather & Power Status
 
-A serverless weather and power situational-awareness app built to support operational decision-making during severe weather and outage events.
+A serverless situational-awareness application that combines National Weather Service data with normalized electric-utility outage information behind a single FastAPI API.
 
-This project was created for two reasons:
+This repository is the **serverless portfolio lineage** of the project. It is designed for AWS Lambda/API Gateway with a static frontend, and all committed site records are synthetic demonstration data.
 
-1. To give my co-workers a fast, practical way to check weather and outage context in one place.
-2. To demonstrate AWS and serverless application design in a real-world use case.
+## What It Does
 
-## Overview
+`GET /api/status` accepts either a synthetic `site_id` or latitude/longitude coordinates and returns a normalized status response containing weather, alert, utility, and nearby outage context when the upstream provider makes that information available.
 
-The app combines weather observations, weather alerts, and nearby utility outage information into a single status lookup.
+The backend separates provider-specific collection logic from the API contract so utilities with very different outage systems can be handled through the same routing layer.
 
-Users can search by site ID and quickly see:
+## Provider Coverage
 
-- current weather conditions
-- active weather alerts
-- utility/provider information
-- nearby outage activity and estimated restoration context when available
+The current application includes adapters for 12 utility/provider families:
 
-This is designed for fast operational awareness rather than deep analytics.
+| Utility key | Provider |
+| --- | --- |
+| `OGE` | OG&E |
+| `PSO` | Public Service Company of Oklahoma |
+| `EVERGY` | Evergy |
+| `ONCOR` | Oncor |
+| `AUSTIN` | Austin Energy |
+| `PEC` | Pedernales Electric Cooperative |
+| `AEP` | AEP Texas |
+| `CENTERPOINT` | CenterPoint Energy |
+| `EPE` | El Paso Electric |
+| `CITY_OF_CONCORDIA_ELECTRIC` | Concordia Electric |
+| `PRAIRIE_LAND_ELECTRIC` | Prairie Land Electric Cooperative |
+| `NINNESCAH_RURAL_ELECTRIC` | Ninnescah Rural Electric Cooperative |
 
-## Why I Built It
+Provider implementations normalize different public outage-data formats into the application's common response model. Third-party endpoints can change independently of this project, so individual integrations may require maintenance over time.
 
-In operations, weather and power issues often show up together, but the information is usually spread across multiple systems and websites.
+## Synthetic Demo Dataset
 
-This app reduces that friction by pulling the relevant context into one place. It is especially useful during high-impact weather events when speed and clarity matter.
+`app/data/sites.json` contains **synthetic portfolio records only**. The demo records preserve the application's richer site schema without publishing operational facility data, real addresses, contact numbers, or stored outage-map URLs.
 
-It also serves as a practical AWS portfolio project that demonstrates how I design, deploy, and harden cloud-hosted applications.
+Representative IDs include:
 
-## Features
+- `DEMO_OKC_01` — OGE
+- `DEMO_TUL_01` — PSO
+- `DEMO_KCK_01` — EVERGY
+- `DEMO_DAL_01` — ONCOR
+- `DEMO_AUS_01` — Austin Energy
+- `DEMO_PEC_01` — PEC
+- `DEMO_AEP_01` — AEP Texas
+- `DEMO_CNP_01` — CenterPoint
+- `DEMO_EPE_01` — El Paso Electric
+- `DEMO_CEC_01` — Concordia Electric
+- `DEMO_PLE_01` — Prairie Land Electric
+- `DEMO_NRE_01` — Ninnescah Rural Electric
 
-- site ID-based lookup for operationally relevant locations
-- current weather conditions from NWS sources
-- weather alert visibility
-- nearby utility outage context
-- provider-aware outage integration
-- simple frontend for quick status checks
-- API-first backend design
-
-## Demo Site IDs
-
-The repo includes demo/test site IDs for quick validation:
-
-- `TULSATEST`
-- `OKCTEST`
-- `DALLASTEST`
-- `KCKTEST`
+The test suite enforces coverage for all 12 canonical utility keys and verifies the synthetic-data contract.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    U[User Browser] --> CF[CloudFront]
+    U[Browser] --> CF[CloudFront]
     CF --> S3[S3 Static Frontend]
-    U --> APIGW[API Gateway]
-    APIGW --> L[Lambda / FastAPI]
-    L --> W[National Weather Service API]
-    L --> O[Utility / Outage Provider APIs]
-    L --> APIGW
-    APIGW --> U
+    U --> APIGW[API Gateway HTTP API]
+    APIGW --> L[AWS Lambda / FastAPI]
+    L --> NWS[National Weather Service]
+    L --> R[Provider Router]
+    R --> P[Public Utility Outage Sources]
 ```
 
-### Request Flow
+### Backend
 
-1. The user opens the frontend in the browser.
-2. CloudFront serves the static frontend hosted in Amazon S3.
-3. The frontend calls the `/api/status` endpoint through Amazon API Gateway.
-4. AWS Lambda runs the FastAPI backend and coordinates provider lookups.
-5. The backend queries weather and outage providers, normalizes the response, and returns a consistent JSON payload to the frontend.
+- FastAPI application
+- Mangum ASGI-to-Lambda adapter
+- AWS Lambda on Python 3.12
+- API Gateway HTTP API
+- provider router with normalized response models
+- outbound hostname allowlist and concurrency controls
+- provider health/cache behavior for degraded upstream conditions
 
 ### Frontend
-- static frontend hosted separately
-- Amazon S3
-- Amazon CloudFront
 
-### Backend
-- FastAPI application
-- AWS Lambda
-- Amazon API Gateway
-- Mangum adapter for ASGI/Lambda integration
+- static HTML/CSS/JavaScript
+- deployed independently to Amazon S3
+- compatible with CloudFront delivery
 
-### External Data Sources
-- National Weather Service / weather.gov
-- utility outage provider endpoints
+### Deployment
 
-## Security / Hardening Highlights
+`template.yaml` defines the SAM backend. The deployment workflow uses GitHub Actions and AWS OIDC rather than long-lived AWS access keys.
 
-This project includes practical hardening measures appropriate for a public-facing serverless application:
+The current API Gateway defaults are deliberately bounded:
 
-- input validation and bounds checking
-- utility override allowlist
-- latitude/longitude validation
-- security response headers
+- throttling rate: **4 requests/second**
+- throttling burst: **8 requests**
+- Lambda timeout: **30 seconds**
+- Lambda memory: **1024 MB**
+
+## Security and Reliability Controls
+
+The public lineage includes:
+
+- latitude/longitude validation and bounded query inputs
+- explicit utility/provider routing allowlists
 - API Gateway throttling
-- outbound concurrency bulkhead
-- outbound host allowlist
-- pinned dependency versions
-- CI dependency audit
-- reduced exception detail leakage in client responses
+- security response headers
+- reduced client-facing exception leakage
+- outbound hostname restrictions
+- bounded outbound concurrency
+- provider timeout and fallback behavior
+- pinned runtime and development dependencies
+- `pip-audit` in CI
+- compile/import and Ruff failure checks
+- synthetic-data contract tests
+- publication-safety scanning for employer branding, private-key material, AWS account ARNs, and ECR registry identifiers
+- EPE credential-like values excluded from source code
 
 ## Local Development
 
-Install dependencies:
+Python 3.12 is the target runtime.
 
 ```bash
-pip install -r requirements.txt -r requirements-dev.txt
-```
-
-Run tests:
-
-```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt -r requirements-dev.txt
 PYTHONPATH=. pytest -q tests
-```
-
-Run locally (example):
-
-```bash
 uvicorn app.api:app --reload
 ```
 
-## Deployment
+On Windows PowerShell, activate the virtual environment with `.venv\Scripts\Activate.ps1`.
 
-This project is deployed as a serverless application using AWS SAM and GitHub Actions.
+The health endpoint is available at:
 
-High-level deployment flow:
+```text
+GET /healthz
+```
 
-- code pushed to GitHub
-- GitHub Actions runs tests and validation
-- backend deploys through SAM
-- frontend assets deploy to S3
-- CloudFront serves the frontend and routes API traffic appropriately
+## Optional El Paso Electric Configuration
 
-## Notes
+The El Paso Electric adapter intentionally does **not** contain embedded credential-like defaults. If you intend to enable that provider, supply these values through the runtime environment:
 
-- provider latency can vary during severe weather events
-- outage accuracy and restoration estimates depend on third-party provider data
-- some provider paths warm up faster than others due to caching behavior
-- API throttling and fallback behavior are intentional protections
+```text
+EPE_API_KEY
+EPE_ENCRYPTION_KEY
+```
 
-## Purpose as a Portfolio Project
+`.env.example` documents the variable names with blank values. Do not commit populated `.env` files.
 
-This repo is intended to show practical AWS and application engineering skills, including:
+## Testing and CI
+
+The non-deploying portfolio workflow runs on the finalization branch and on pull requests to `main`. It performs:
+
+1. dependency installation
+2. runtime dependency checks
+3. Python compilation and targeted Ruff checks
+4. the pytest suite
+5. `pip-audit` with no vulnerability suppressions
+6. the publication-safety scan
+
+The production deployment workflow repeats syntax/tests/audit checks before SAM deployment.
+
+## AWS Deployment
+
+The repository includes an AWS SAM template and a GitHub Actions deployment workflow. To use the deployment workflow in another AWS account, provide your own repository variables/secrets for the deployment region, stack/bucket names, and OIDC roles.
+
+High-level flow:
+
+```text
+Git push to main
+    -> GitHub Actions checks
+    -> AWS OIDC authentication
+    -> SAM build / validate / deploy
+    -> frontend sync to S3
+```
+
+No AWS account IDs, private registry locations, internal domains, or organization-specific network ranges are required by the application source.
+
+## Design Notes
+
+- Provider latency and availability vary during severe-weather events.
+- Restoration estimates are third-party data and should be treated as advisory.
+- Some provider adapters perform discovery/caching to cope with changing upstream map structures.
+- The application exposes a consistent API even though upstream utilities use different technologies and data shapes.
+- This serverless lineage is intentionally separate from the project's container/Kubernetes deployment lineage.
+
+## Portfolio Focus
+
+The project demonstrates:
 
 - serverless API design
-- frontend/backend separation
-- deployment automation
-- operational resiliency thinking
-- security-minded hardening
-- debugging and performance testing under realistic conditions
+- FastAPI/Lambda integration
+- multi-provider normalization
+- defensive integration with external systems
+- synthetic-data sanitization
+- cloud deployment automation
+- AWS OIDC-based CI/CD
+- dependency and publication security gates
+- operational resilience and degraded-provider handling
 
 ## License
 
