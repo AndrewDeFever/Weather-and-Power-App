@@ -31,6 +31,7 @@ class PowerMeta(BaseModel):
     source: str = "app.power_router.get_power_status"
     ok: bool = True
     error: Optional[str] = None
+    warning: Optional[str] = None
     generated_at_utc: str = Field(
         default_factory=lambda: datetime.utcnow().isoformat(timespec="seconds") + "Z"
     )
