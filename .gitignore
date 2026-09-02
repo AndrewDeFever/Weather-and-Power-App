@@ -21,3 +21,4 @@ Thumbs.db
 # Secrets / temp
 .env
 .env.*
+!.env.example
