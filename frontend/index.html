@@ -3,32 +3,36 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Weather & Power Status</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <title>SubReal Studios | Weather & Power Status</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260902a">
 </head>
+
 <body>
   <header class="topbar">
     <div class="container">
       <div class="header-row">
-        <div class="brand" aria-label="Weather and Power Status">
-          <div class="mark" title="Weather and Power icon"></div>
+        <div class="brand" aria-label="SubReal Studios">
+          <div class="mark" title="SubReal Studios"></div>
           <div class="titlewrap">
-            <div class="title">Weather &amp; Power Status</div>
-            <div class="subtitle">Synthetic portfolio demonstration</div>
+            <div class="title">SubReal Studios</div>
+            <div class="subtitle">Weather &amp; Power Status</div>
           </div>
         </div>
 
         <div class="searchwrap">
           <div class="searchbar" role="search">
-            <input
-              id="q"
-              class="input"
-              type="text"
-              inputmode="search"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="Enter demo Site ID (e.g., DEMO_TUL_01) or coordinates"
-            />
+            <div class="search-input-wrap">
+              <input
+                id="q"
+                class="input"
+                type="text"
+                inputmode="search"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Enter demo Site ID (e.g., DEMO_TUL_01) or coordinates"
+              />
+              <div id="suggestions" class="suggestions-dropdown" hidden aria-label="Search suggestions"></div>
+            </div>
             <button id="btn" class="btn" type="button">Search</button>
           </div>
         </div>
@@ -38,6 +42,17 @@
             <span id="statusDot" class="dot"></span>
             <span id="statusText">Idle</span>
           </div>
+          <button
+            id="themeToggle"
+            class="theme-toggle"
+            type="button"
+            role="switch"
+            aria-checked="false"
+            aria-label="Toggle color theme"
+            title="Toggle color theme"
+          >
+            <span class="theme-knob" aria-hidden="true"></span>
+          </button>
         </div>
       </div>
 
@@ -60,6 +75,7 @@
       </div>
 
       <div class="grid" aria-live="polite">
+        <!-- Summary Cards -->
         <section class="card" aria-label="Location summary">
           <div class="accentline"></div>
           <div class="label"><span class="dot ok"></span> Location</div>
@@ -88,31 +104,44 @@
           <div id="c_pwr_meta" class="meta">—</div>
         </section>
 
+        <!-- Details Panel -->
         <section class="panel" aria-label="Details">
           <div class="tabs" role="tablist" aria-label="Details tabs">
             <button class="tab active" role="tab" aria-selected="true" aria-controls="tab_overview" id="t_overview" type="button">Overview</button>
             <button class="tab" role="tab" aria-selected="false" aria-controls="tab_power" id="t_power" type="button">Power</button>
             <button class="tab" role="tab" aria-selected="false" aria-controls="tab_weather" id="t_weather" type="button">Weather</button>
             <button class="tab" role="tab" aria-selected="false" aria-controls="tab_raw" id="t_raw" type="button">Raw JSON</button>
+
             <div style="margin-left:auto"></div>
           </div>
 
           <div class="actions">
-            <button id="openGoogleMaps" class="linkbtn" type="button" disabled>Open in Google Maps</button>
-            <button id="openOutageMap" class="linkbtn" type="button" disabled>Open Outage Map</button>
-            <button id="openNwsMap" class="linkbtn" type="button" disabled>Open Weather Map</button>
+			<button id="openGoogleMaps" class="linkbtn" type="button" disabled>Open in Google Maps</button>
+          <button id="openOutageMap" class="linkbtn" type="button" disabled>Open Power Outage Map</button>
+			<button id="openNwsMap" class="linkbtn" type="button" disabled>Open Weather Map</button>
           </div>
 
           <div class="panel-body">
-            <div id="tab_overview" role="tabpanel" aria-labelledby="t_overview"><div id="ov_kv"></div></div>
-            <div id="tab_power" role="tabpanel" aria-labelledby="t_power" hidden><div id="pwr_kv"></div></div>
-            <div id="tab_weather" role="tabpanel" aria-labelledby="t_weather" hidden><div id="wx_kv"></div></div>
-            <div id="tab_raw" role="tabpanel" aria-labelledby="t_raw" hidden><pre id="raw">(no data)</pre></div>
+            <div id="tab_overview" role="tabpanel" aria-labelledby="t_overview">
+              <div id="ov_kv"></div>
+            </div>
+
+            <div id="tab_power" role="tabpanel" aria-labelledby="t_power" hidden>
+              <div id="pwr_kv"></div>
+            </div>
+
+            <div id="tab_weather" role="tabpanel" aria-labelledby="t_weather" hidden>
+              <div id="wx_kv"></div>
+            </div>
+
+            <div id="tab_raw" role="tabpanel" aria-labelledby="t_raw" hidden>
+              <pre id="raw">(no data)</pre>
+            </div>
           </div>
         </section>
       </div>
     </div>
   </main>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260902a"></script>
 </body>
 </html>
