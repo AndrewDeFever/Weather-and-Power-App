@@ -29,6 +29,21 @@ REQUIRED_FIELDS = {
     "zip",
 }
 
+EXPECTED_CANONICAL_UTILITIES = {
+    "OGE",
+    "PSO",
+    "EVERGY",
+    "ONCOR",
+    "AUSTIN",
+    "PEC",
+    "AEP",
+    "CENTERPOINT",
+    "EPE",
+    "CITY_OF_CONCORDIA_ELECTRIC",
+    "PRAIRIE_LAND_ELECTRIC",
+    "NINNESCAH_RURAL_ELECTRIC",
+}
+
 
 def _load_sites():
     return json.loads(SITES_PATH.read_text(encoding="utf-8"))
@@ -71,3 +86,11 @@ def test_sites_do_not_embed_operational_contact_or_outage_urls():
         assert site["utility_phone"] is None
         assert site["outage_map"] is None
         assert site["zip"] is None
+
+
+def test_synthetic_dataset_covers_every_canonical_provider():
+    sites = _load_sites()
+    utilities = {site["utility"] for site in sites.values() if site["enabled"]}
+
+    assert EXPECTED_CANONICAL_UTILITIES <= utilities
+    assert len(EXPECTED_CANONICAL_UTILITIES) == 12
