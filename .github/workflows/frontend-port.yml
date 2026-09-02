@@ -1,0 +1,61 @@
+name: SubReal Frontend Port
+
+on:
+  push:
+    branches: ["portfolio-finalization"]
+    paths:
+      - ".migration/subreal_frontend.tar.gz.b64"
+      - ".github/workflows/frontend-port.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct sanitized production frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .migration/subreal_frontend.tar.gz.b64 > /tmp/subreal_frontend.tar.gz
+          echo "07a6695c2554e295106d0bd976cd15497cefbce049d60dfcb47003a55608ee3e  /tmp/subreal_frontend.tar.gz" | sha256sum -c -
+          rm -rf /tmp/subreal_frontend
+          mkdir -p /tmp/subreal_frontend
+          tar -xzf /tmp/subreal_frontend.tar.gz -C /tmp/subreal_frontend
+          echo "389f83619f7fff70c54b1600f424e3dd3baf0e1e61cce020fe3936104d17ae30  /tmp/subreal_frontend/index.html" | sha256sum -c -
+          echo "f4a5dee6b01450cec8e3b10fc09b11d0b3a639f0a23e176e342a51b1db601732  /tmp/subreal_frontend/static/app.js" | sha256sum -c -
+          echo "4ecf9ade307517dd45db261b66feb50b0f3db1d82dc35799d98ee2fdcfc715d2  /tmp/subreal_frontend/static/styles.css" | sha256sum -c -
+
+      - name: Validate frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check /tmp/subreal_frontend/static/app.js
+          test -s /tmp/subreal_frontend/index.html
+          test -s /tmp/subreal_frontend/static/styles.css
+          grep -q 'SubReal Studios' /tmp/subreal_frontend/index.html
+          grep -q 'const API_ENDPOINT = "/api/status"' /tmp/subreal_frontend/static/app.js
+          ! grep -RniE 'ONE Gas|one-gas|CRPOK|CRPTX|Comm Outage PRB|Field Services|Optimum|Suddenlink' /tmp/subreal_frontend
+
+      - name: Install frontend and clean migration material
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/subreal_frontend/index.html frontend/index.html
+          cp /tmp/subreal_frontend/static/app.js frontend/static/app.js
+          cp /tmp/subreal_frontend/static/styles.css frontend/static/styles.css
+          rm -rf .migration
+          rm -f .github/workflows/frontend-port.yml
+
+      - name: Commit verified frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: port production frontend as SubReal Studios"
+          git push origin HEAD:portfolio-finalization
