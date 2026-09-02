@@ -38,6 +38,18 @@ jobs:
           python -m compileall -q app tests
           ruff check --select=E9,F63,F7,F82 app tests
 
+      - name: Frontend contract checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check frontend/static/app.js
+          test -s frontend/index.html
+          test -s frontend/static/styles.css
+          grep -q 'SubReal Studios' frontend/index.html
+          grep -q 'const API_ENDPOINT = "/api/status"' frontend/static/app.js
+          grep -q 'DEMO_TUL_01' frontend/static/app.js
+          ! grep -RniE 'ONE Gas|one-gas|CRPOK|CRPTX|Comm Outage PRB|Field Services|Optimum|Suddenlink|Telecom - Data|Physical Security' frontend
+
       - name: Run tests
         env:
           PYTHONPATH: .
