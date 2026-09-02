@@ -27,6 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
+          python -m pip install pip-audit
 
       - name: Runtime dependency checks
         run: |
@@ -41,3 +42,47 @@ jobs:
         env:
           PYTHONPATH: .
         run: pytest -q tests
+
+      - name: Audit Python dependencies
+        run: |
+          pip-audit --no-deps -r requirements.txt -r requirements-dev.txt
+
+      - name: Publish-safety scan
+        shell: bash
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          roots = [pathlib.Path("app"), pathlib.Path("frontend"), pathlib.Path("tests"), pathlib.Path(".github")]
+          text_suffixes = {".py", ".json", ".html", ".css", ".js", ".yml", ".yaml", ".md", ".txt"}
+          patterns = {
+              "employer branding": re.compile(r"ONE\s+Gas|onegas\.com", re.I),
+              "private key material": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+              "hardcoded AWS account ARN": re.compile(r"arn:aws:[^:\s]+:[^:\s]*:\d{12}:"),
+              "hardcoded ECR registry": re.compile(r"\b\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com\b", re.I),
+          }
+
+          findings = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob("*"):
+                  if not path.is_file() or path.suffix.lower() not in text_suffixes:
+                      continue
+                  try:
+                      text = path.read_text(encoding="utf-8")
+                  except UnicodeDecodeError:
+                      continue
+                  for label, pattern in patterns.items():
+                      if pattern.search(text):
+                          findings.append(f"{path}: {label}")
+
+          if findings:
+              print("Publish-safety findings:")
+              print("\n".join(findings))
+              sys.exit(1)
+
+          print("Publish-safety scan passed")
+          PY
