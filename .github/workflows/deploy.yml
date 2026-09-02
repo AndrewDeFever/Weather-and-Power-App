@@ -1,0 +1,172 @@
+name: "Deploy Weather-and-Power App (SAM)"
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: "weather-power-status-deploy"
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  SAM_CLI_TELEMETRY: "0"
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  STACK_NAME: ${{ vars.STACK_NAME }}
+  SAM_DEPLOY_BUCKET: ${{ vars.SAM_DEPLOY_BUCKET }}
+  FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+
+      - name: "Configure AWS credentials (OIDC)"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "Verify AWS identity"
+        run: |
+          aws sts get-caller-identity
+          aws configure list
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "Install dependencies (checks)"
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: "Fail-fast: syntax + import checks"
+        run: |
+          python -m compileall -q .
+          # Minimal ruff ruleset: catch syntax errors, undefined names, and similar deploy-breakers.
+          ruff check --select=E9,F63,F7,F82 .
+
+      - name: "Run tests"
+        run: |
+          PYTHONPATH=. pytest -q tests
+
+      - name: "Audit Python dependencies"
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          # Temporary ignore: FastAPI currently constrains Starlette below the fixed version
+          # for CVE-2025-62727. Revisit when FastAPI supports Starlette >= 0.49.1.
+          pip-audit --no-deps --ignore-vuln CVE-2025-62727 -r requirements.txt -r requirements-dev.txt
+
+      - name: "Install AWS SAM CLI"
+        uses: aws-actions/setup-sam@v2
+
+      - name: "Guard: wait for stack to be stable"
+        run: |
+          set -euo pipefail
+          STATUS=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "MISSING")
+          echo "Stack status: $STATUS"
+
+          if [[ "$STATUS" == "MISSING" ]]; then
+            echo "Stack does not exist yet; continuing."
+            exit 0
+          fi
+
+          if [[ "$STATUS" == *"IN_PROGRESS"* ]]; then
+            echo "Stack is busy ($STATUS). Waiting..."
+            aws cloudformation wait stack-update-complete --stack-name "${STACK_NAME}" || true
+            aws cloudformation wait stack-create-complete --stack-name "${STACK_NAME}" || true
+          fi
+
+          STATUS2=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].StackStatus" --output text)
+          echo "Stack status after wait: $STATUS2"
+
+          if [[ "$STATUS2" == *"IN_PROGRESS"* ]]; then
+            echo "Stack still in progress; failing to avoid collision."
+            exit 1
+          fi
+
+      - name: "SAM Build"
+        run: sam build --debug
+
+      - name: "SAM Validate"
+        run: sam validate
+
+      - name: "SAM Deploy"
+        run: |
+          sam deploy \
+            --stack-name "${STACK_NAME}" \
+            --region "${AWS_REGION}" \
+            --s3-bucket "${SAM_DEPLOY_BUCKET}" \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --role-arn "${{ secrets.CFN_EXEC_ROLE_ARN }}" \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --debug
+
+      # --- Deploy frontend to S3 ---
+      # Expects these files to exist in the repo:
+      #   frontend/index.html
+      #   frontend/static/app.js
+      #   frontend/static/styles.css
+      - name: "Deploy frontend (S3 static website)"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Fail fast if the frontend isn't present (prevents silent drift)
+          test -f frontend/index.html
+          test -f frontend/static/app.js
+          test -f frontend/static/styles.css
+
+          echo "Uploading static assets (no-cache to avoid stale JS during rapid iteration)..."
+          aws s3 sync frontend/static "s3://${FRONTEND_BUCKET}/static" \
+            --delete \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          echo "Uploading index.html (no-cache)..."
+          aws s3 cp frontend/index.html "s3://${FRONTEND_BUCKET}/index.html" \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --content-type "text/html"
+
+      - name: "Dump CloudFormation events on failure"
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name "${STACK_NAME}" \
+            --max-items 50
+
+      - name: "Continue rollback only if needed"
+        if: failure()
+        run: |
+          STATUS=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].StackStatus" --output text)
+          echo "Current stack status: $STATUS"
+          if [[ "$STATUS" == "UPDATE_ROLLBACK_FAILED" || "$STATUS" == "UPDATE_ROLLBACK_IN_PROGRESS" ]]; then
+            aws cloudformation continue-update-rollback --stack-name "${STACK_NAME}"
+          else
+            echo "No rollback action required."
+          fi
+
+      - name: "Show stack status"
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name "${STACK_NAME}" \
+            --query "Stacks[0].StackStatus" \
+            --output text || true
+
+      - name: "Tail recent stack events"
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name "${STACK_NAME}" \
+            --max-items 30 \
+            --query "StackEvents[].[Timestamp,ResourceStatus,LogicalResourceId,ResourceType,ResourceStatusReason]" \
+            --output table || true
