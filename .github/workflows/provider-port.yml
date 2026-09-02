@@ -1,0 +1,88 @@
+name: Provider Port
+
+on:
+  push:
+    branches: ["portfolio-finalization"]
+    paths:
+      - ".github/workflows/provider-port.yml"
+      - ".migration/provider-port/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  port:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: portfolio-finalization
+          fetch-depth: 0
+
+      - name: Ensure payloads exist
+        id: payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f .migration/provider-port/austin.py.gz.b64 && -f .migration/provider-port/pso.py.gz.b64 ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reconstruct exact sanitized modules
+        if: steps.payloads.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .migration/provider-port/austin.py.gz.b64 | gzip -dc > app/providers/austin_energy_kubra.py
+          base64 -d .migration/provider-port/pso.py.gz.b64 | gzip -dc > app/providers/pso_kubra.py
+
+          printf '%s  %s\n' \
+            '0b8c205175295b4bf15e5f8062e028f74492b6d3ce261f36c863e063673266cf' \
+            'app/providers/austin_energy_kubra.py' | sha256sum -c -
+          printf '%s  %s\n' \
+            '9437e7b9b1c1f51f524c4c40bd7356b34e3f7b44037f575c467010254f092665' \
+            'app/providers/pso_kubra.py' | sha256sum -c -
+
+          test "$(wc -c < app/providers/austin_energy_kubra.py)" -eq 34034
+          test "$(wc -c < app/providers/pso_kubra.py)" -eq 33593
+
+          ! grep -nE 'NOC-AustinEnergy|NOCTriage|ONE[[:space:]]+Gas|onegas' \
+            app/providers/austin_energy_kubra.py app/providers/pso_kubra.py
+
+      - name: Set up Python
+        if: steps.payloads.outputs.present == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: steps.payloads.outputs.present == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Verify code
+        if: steps.payloads.outputs.present == 'true'
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m compileall -q app tests
+          ruff check --select=E9,F63,F7,F82 app tests
+          pytest -q tests
+
+      - name: Commit verified provider upgrades
+        if: steps.payloads.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .migration/provider-port
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/providers/austin_energy_kubra.py app/providers/pso_kubra.py .migration/provider-port
+          git commit -m "feat: port production Austin and PSO providers"
+          git push origin HEAD:portfolio-finalization
