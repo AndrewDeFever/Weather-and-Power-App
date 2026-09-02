@@ -69,6 +69,7 @@ jobs:
 
           roots = [pathlib.Path("app"), pathlib.Path("frontend"), pathlib.Path("tests"), pathlib.Path(".github")]
           text_suffixes = {".py", ".json", ".html", ".css", ".js", ".yml", ".yaml", ".md", ".txt"}
+          self_path = pathlib.Path(".github/workflows/portfolio-ci.yml")
           patterns = {
               "employer branding": re.compile(r"ONE\s+Gas|onegas\.com", re.I),
               "private key material": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -81,6 +82,8 @@ jobs:
               if not root.exists():
                   continue
               for path in root.rglob("*"):
+                  if path == self_path:
+                      continue
                   if not path.is_file() or path.suffix.lower() not in text_suffixes:
                       continue
                   try:
