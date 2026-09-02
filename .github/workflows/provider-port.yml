@@ -32,6 +32,20 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Verify payload transport
+        if: steps.payloads.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          wc -c .migration/provider-port/austin.py.gz.b64 .migration/provider-port/pso.py.gz.b64
+          sha256sum .migration/provider-port/austin.py.gz.b64 .migration/provider-port/pso.py.gz.b64
+          printf '%s  %s\n' \
+            'b73d3926b86a56c430130737e1568ad20a86bffbcc109bbc3e920d5d796c0038' \
+            '.migration/provider-port/austin.py.gz.b64' | sha256sum -c -
+          printf '%s  %s\n' \
+            'c202d6b9cb3eb0da8692f72ec2764591fd7eadd26649d0b26d1de8a38bd67327' \
+            '.migration/provider-port/pso.py.gz.b64' | sha256sum -c -
+
       - name: Reconstruct exact sanitized modules
         if: steps.payloads.outputs.present == 'true'
         shell: bash
