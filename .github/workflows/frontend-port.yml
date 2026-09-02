@@ -4,7 +4,7 @@ on:
   push:
     branches: ["portfolio-finalization"]
     paths:
-      - ".migration/subreal_frontend.tar.gz.b64"
+      - ".migration/frontend_chunks/**"
       - ".github/workflows/frontend-port.yml"
 
 permissions:
@@ -16,11 +16,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify transport chunks
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "3e97d11b4989e8a28916b65090933943f0cc9eca45c006b178269369cdf7199e  .migration/frontend_chunks/chunk_00" | sha256sum -c -
+          echo "855e9e6d47429589bb69248cf2d1e74f49103cc351b8b19079b3c49f085dfc03  .migration/frontend_chunks/chunk_01" | sha256sum -c -
+          echo "c9e0ae7e4aa0d6808928d7ebb11ac136fe561baa5526b06457702e28b2813e43  .migration/frontend_chunks/chunk_02" | sha256sum -c -
+          echo "c73aaca755831dd302eeb982dee9644c8bcab7ee851b8af741b392d1c6f4fe40  .migration/frontend_chunks/chunk_03" | sha256sum -c -
+          echo "2dd606445fb6fede4523e1a96d6a5e89e49ad40e1306db751763e60dc7d1b54f  .migration/frontend_chunks/chunk_04" | sha256sum -c -
+          echo "c2b4242a3611970e7ea6d2ac0f199ce72ed715c9a4231afab686760798ff1325  .migration/frontend_chunks/chunk_05" | sha256sum -c -
+          cat .migration/frontend_chunks/chunk_00 .migration/frontend_chunks/chunk_01 .migration/frontend_chunks/chunk_02 .migration/frontend_chunks/chunk_03 .migration/frontend_chunks/chunk_04 .migration/frontend_chunks/chunk_05 > /tmp/subreal_frontend.tar.gz.b64
+          test "$(wc -c < /tmp/subreal_frontend.tar.gz.b64)" -eq 20444
+          echo "b745cadf857345b4628dc730425b802ad9e4d8f3484ebe0d5ebe19ecead22bcb  /tmp/subreal_frontend.tar.gz.b64" | sha256sum -c -
+
       - name: Reconstruct sanitized production frontend
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d .migration/subreal_frontend.tar.gz.b64 > /tmp/subreal_frontend.tar.gz
+          base64 -d /tmp/subreal_frontend.tar.gz.b64 > /tmp/subreal_frontend.tar.gz
           echo "07a6695c2554e295106d0bd976cd15497cefbce049d60dfcb47003a55608ee3e  /tmp/subreal_frontend.tar.gz" | sha256sum -c -
           rm -rf /tmp/subreal_frontend
           mkdir -p /tmp/subreal_frontend
@@ -38,7 +52,7 @@ jobs:
           test -s /tmp/subreal_frontend/static/styles.css
           grep -q 'SubReal Studios' /tmp/subreal_frontend/index.html
           grep -q 'const API_ENDPOINT = "/api/status"' /tmp/subreal_frontend/static/app.js
-          ! grep -RniE 'ONE Gas|one-gas|CRPOK|CRPTX|Comm Outage PRB|Field Services|Optimum|Suddenlink' /tmp/subreal_frontend
+          ! grep -RniE 'ONE Gas|one-gas|CRPOK|CRPTX|Comm Outage PRB|Field Services|Optimum|Suddenlink|Telecom - Data|Physical Security' /tmp/subreal_frontend
 
       - name: Install frontend and clean migration material
         shell: bash
