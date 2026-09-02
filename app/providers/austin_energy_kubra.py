@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -10,8 +11,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+import urllib3
 
 from app.netguard import limited_get
+
+_log = logging.getLogger("wnp.austin_kubra")
 
 # ============================================================
 # Austin Energy (Kubra) provider with sanity gate + full tiles
@@ -19,11 +23,15 @@ from app.netguard import limited_get
 
 # --- Locked anchors from working public tile URL ---
 AUSTIN_DATASET_UUID = "20d293c6-08fd-41b3-b96b-d2f522c74990"
-AUSTIN_LOCKED_STATE_UUID = "e32748cf-d34d-4844-8400-5340fba1a35b"
+AUSTIN_LOCKED_STATE_UUID = "9374d7e4-e078-4f44-b6f4-74cdc63f4acf"
 AUSTIN_ENTRY_CLUSTER_LEVEL = 1
 
 # Cache for last-known-good state UUID (rotation fallback)
 STATE_UUID_CACHE_FILE = os.getenv("AUSTIN_STATE_UUID_CACHE_FILE", "/tmp/austin_energy_state_uuid.json")
+
+# Fast-path overrides for environments where Austin state UUID / zoom are stable.
+AUSTIN_STATE_UUID = os.getenv("AUSTIN_STATE_UUID", "").strip() or None
+AUSTIN_ENTRY_ZOOM = os.getenv("AUSTIN_ENTRY_ZOOM", "").strip() or None
 
 # Kubra config endpoint you provided (used for sanity gate)
 CONFIG_URL = (
@@ -34,10 +42,32 @@ CONFIG_URL = (
     "?preview=false"
 )
 
+CURRENT_STATE_URL = (
+    "https://kubra.io/stormcenter/api/v1/stormcenters/"
+    "dd9c446f-f6b8-43f9-8f80-83f5245c60a1/"
+    "views/76446308-a901-4fa3-849c-3dd569933a51/"
+    "currentState?preview=false"
+)
+
 DEFAULT_HEADERS = {
-    "User-Agent": "NOC-AustinEnergyKubraProvider/2.0",
+    "User-Agent": "WeatherPower-AustinEnergyKubraProvider/2.0",
     "Accept": "application/json,text/plain,*/*",
 }
+
+# TLS controls for environments with SSL interception.
+# Default is secure verification. Set AUSTIN_SSL_VERIFY=false only when required.
+_AUSTIN_SSL_VERIFY_ENV = os.getenv("AUSTIN_SSL_VERIFY", "true").strip().lower()
+AUSTIN_SSL_VERIFY = _AUSTIN_SSL_VERIFY_ENV in ("1", "true", "yes", "on")
+AUSTIN_SSL_CA_BUNDLE = os.getenv("AUSTIN_SSL_CA_BUNDLE", "").strip() or None
+if not AUSTIN_SSL_VERIFY:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+AUSTIN_SANITY_TIMEOUT_S = float(os.getenv("AUSTIN_SANITY_TIMEOUT_S", "3.0"))
+AUSTIN_DISCOVERY_TIMEOUT_S = float(os.getenv("AUSTIN_DISCOVERY_TIMEOUT_S", "3.0"))
+AUSTIN_TILE_TIMEOUT_S = float(os.getenv("AUSTIN_TILE_TIMEOUT_S", "4.0"))
+AUSTIN_WARM_LAT = float(os.getenv("AUSTIN_WARM_LAT", "30.2672"))
+AUSTIN_WARM_LON = float(os.getenv("AUSTIN_WARM_LON", "-97.7431"))
+AUSTIN_WARM_MAX_ZOOM = int(os.getenv("AUSTIN_WARM_MAX_ZOOM", "12"))
 
 OUTAGE_KEYS = {
     "id",
@@ -309,20 +339,27 @@ def _tile_url(state_uuid: str, cluster_level: int, qkh: str) -> str:
 # --------------------------
 # State UUID cache helpers
 # --------------------------
-def _load_cached_state_uuid() -> Optional[str]:
+def _load_cached_state_context() -> Tuple[Optional[str], Optional[int]]:
     try:
         with open(STATE_UUID_CACHE_FILE, "r", encoding="utf-8") as f:
             obj = json.load(f)
-        v = obj.get("state_uuid")
-        return v if isinstance(v, str) and v.strip() else None
+        state_uuid = obj.get("state_uuid")
+        entry_zoom = obj.get("entry_zoom")
+        return (
+            state_uuid if isinstance(state_uuid, str) and state_uuid.strip() else None,
+            _safe_int(entry_zoom),
+        )
     except Exception:
-        return None
+        return None, None
 
 
-def _save_cached_state_uuid(state_uuid: str) -> None:
+def _save_cached_state_context(state_uuid: str, entry_zoom: Optional[int] = None) -> None:
     try:
+        payload: Dict[str, Any] = {"state_uuid": state_uuid}
+        if isinstance(entry_zoom, int):
+            payload["entry_zoom"] = entry_zoom
         with open(STATE_UUID_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump({"state_uuid": state_uuid}, f)
+            json.dump(payload, f)
     except Exception:
         pass
 
@@ -330,10 +367,11 @@ def _save_cached_state_uuid(state_uuid: str) -> None:
 # --------------------------
 # HTTP helpers
 # --------------------------
-def _http_get_json(session: requests.Session, url: str, debug: bool, timeout: float = 10.0) -> Optional[dict]:
+def _http_get_json(session: requests.Session, url: str, debug: bool, timeout: float = AUSTIN_TILE_TIMEOUT_S) -> Optional[dict]:
     _dbg(debug, f"PROBE GET {url}")
     try:
-        r = limited_get(session, url, headers=DEFAULT_HEADERS, timeout=timeout)
+        verify_arg: Any = AUSTIN_SSL_CA_BUNDLE if AUSTIN_SSL_CA_BUNDLE else AUSTIN_SSL_VERIFY
+        r = limited_get(session, url, headers=DEFAULT_HEADERS, timeout=timeout, verify=verify_arg)
     except Exception as e:
         _dbg(debug, f"PROBE FAIL {url} exc={type(e).__name__}")
         return None
@@ -351,7 +389,7 @@ def _http_get_json(session: requests.Session, url: str, debug: bool, timeout: fl
 # SANITY GATE (0 outages => return empty)
 # --------------------------
 def _fetch_interval_blob(session: requests.Session, debug: bool) -> Optional[dict]:
-    cfg = _http_get_json(session, CONFIG_URL, debug=debug, timeout=10.0)
+    cfg = _http_get_json(session, CONFIG_URL, debug=debug, timeout=AUSTIN_SANITY_TIMEOUT_S)
     if not isinstance(cfg, dict):
         return None
 
@@ -369,9 +407,49 @@ def _fetch_interval_blob(session: requests.Session, debug: bool) -> Optional[dic
         f"https://kubra.io/{path}/public.json",
     ]
     for url in candidates:
-        blob = _http_get_json(session, url, debug=debug, timeout=10.0)
+        blob = _http_get_json(session, url, debug=debug, timeout=AUSTIN_DISCOVERY_TIMEOUT_S)
         if isinstance(blob, dict):
             return blob
+    return None
+
+
+def _fetch_current_state_uuid(session: requests.Session, debug: bool) -> Optional[str]:
+    cur = _http_get_json(session, CURRENT_STATE_URL, debug=debug, timeout=10.0)
+    if not isinstance(cur, dict):
+        return None
+
+    # Most deployments expose the UUID in data.currentStateId/stateId.
+    data = cur.get("data")
+    if not isinstance(data, dict):
+        data = cur
+
+    for key in ("currentStateId", "stateId", "stateUUID", "state_uuid"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    # Austin currentState commonly embeds the active state UUID in a cluster path:
+    # cluster-data/{qkh}/<dataset_uuid>/<state_uuid>
+    cluster_path = data.get("cluster_interval_generation_data")
+    if isinstance(cluster_path, str) and cluster_path.strip():
+        parts = [p for p in cluster_path.strip().split("/") if p]
+        if len(parts) >= 4:
+            candidate = parts[3]
+            if re.fullmatch(r"[0-9a-fA-F-]{36}", candidate):
+                return candidate
+
+    # Fallback: interval_generation_data often ends with the active UUID.
+    interval_path = data.get("interval_generation_data")
+    if isinstance(interval_path, str) and interval_path.strip():
+        tail = interval_path.strip().split("/")[-1]
+        if re.fullmatch(r"[0-9a-fA-F-]{36}", tail):
+            return tail
+
+    # Last-resort shallow scan for any UUID-like value.
+    for value in data.values():
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F-]{36}", value.strip()):
+            return value.strip()
+
     return None
 
 
@@ -494,17 +572,48 @@ def _probe_entry_zoom(
     max_zoom: int,
     debug: bool,
 ) -> int:
-    # bounded candidate list; common Kubra entry zooms
-    candidates = [9, 10, 11, 12, 8, 13, 14]
+    # bounded candidate list; Austin commonly starts around 10 and may expose
+    # detail only at deeper quadkeys on the same cluster level.
+    candidates = [10, 11, 12, 13, 14, 9, 8]
     candidates = [z for z in candidates if 1 <= z <= max_zoom]
+    fallback_zoom: Optional[int] = None
 
     for z in candidates:
         qkh = _quadkey_from_latlon(lat, lon, z)
         url = _tile_url(state_uuid, AUSTIN_ENTRY_CLUSTER_LEVEL, qkh)
-        j = _http_get_json(session, url, debug=debug, timeout=8.0)
-        if isinstance(j, dict):
-            _dbg(debug, f"PROBE SUCCESS entry_zoom={z} url={url}")
+        j = _http_get_json(session, url, debug=debug, timeout=AUSTIN_TILE_TIMEOUT_S)
+
+        if not isinstance(j, dict):
+            continue
+
+        if fallback_zoom is None:
+            fallback_zoom = z
+
+        items = _parse_tile_items(j)
+        if not items:
+            _dbg(debug, f"PROBE HIT (no features) entry_zoom={z} url={url}")
+            continue
+
+        has_cluster = False
+        has_incident = False
+        for item in items:
+            o = _normalize_tile_item(item)
+            if o.get("cluster"):
+                has_cluster = True
+            else:
+                has_incident = True
+
+        if has_cluster or has_incident:
+            _dbg(
+                debug,
+                f"PROBE SUCCESS entry_zoom={z} url={url} "
+                f"features={len(items)} clusters={has_cluster} incidents={has_incident}",
+            )
             return z
+
+    if fallback_zoom is not None:
+        _dbg(debug, f"PROBE FALLBACK entry_zoom={fallback_zoom} (dict found, no feature-rich tile)")
+        return fallback_zoom
 
     raise _err("Could not discover entry zoom for Austin Energy cluster tiles")
 
@@ -527,7 +636,7 @@ def _fetch_tiles(
 
     for qkh in qkhs:
         url = _tile_url(state_uuid, cluster_level, qkh)
-        j = _http_get_json(session, url, debug=debug, timeout=8.0)
+        j = _http_get_json(session, url, debug=debug, timeout=AUSTIN_TILE_TIMEOUT_S)
         if not isinstance(j, dict):
             continue
 
@@ -592,6 +701,88 @@ def _drill_clusters(
     return drilled
 
 
+def _drill_same_cluster_level(
+    session: requests.Session,
+    state_uuid: str,
+    cluster_level: int,
+    start_zoom: int,
+    max_zoom: int,
+    lat: float,
+    lon: float,
+    neighbor_depth: int,
+    debug: bool,
+) -> List[Dict[str, Any]]:
+    """
+    Some Austin deployments keep outage features on the same cluster level
+    while increasing quadkey zoom depth (e.g. cluster-1 with 12-digit quadkeys).
+    """
+    if start_zoom >= max_zoom:
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for z in range(start_zoom + 1, max_zoom + 1):
+        tiles_fetched, outs = _fetch_tiles(
+            session=session,
+            state_uuid=state_uuid,
+            cluster_level=cluster_level,
+            zoom=z,
+            lat=lat,
+            lon=lon,
+            neighbor_depth=neighbor_depth,
+            debug=debug,
+        )
+        _dbg(
+            debug,
+            f"SAME-LEVEL fetch: cluster-{cluster_level} zoom={z} tiles_fetched={tiles_fetched} features={len(outs)}",
+        )
+        for o in outs:
+            if not o.get("cluster"):
+                out.append(o)
+    return out
+
+
+def refresh_austin_discovery(debug: bool = False) -> None:
+    """
+    Warm Austin discovery context (state UUID + entry zoom) for faster first lookup.
+    Never raises; logs warnings on failure.
+    """
+    try:
+        session = requests.Session()
+        state_candidates: List[str] = []
+
+        current_state = _fetch_current_state_uuid(session, debug=debug)
+        cached_state, _ = _load_cached_state_context()
+
+        for candidate in (current_state, AUSTIN_STATE_UUID, cached_state, AUSTIN_LOCKED_STATE_UUID):
+            if candidate and candidate not in state_candidates:
+                state_candidates.append(candidate)
+
+        last_error: Optional[str] = None
+        for state_uuid in state_candidates:
+            try:
+                entry_zoom = _probe_entry_zoom(
+                    session,
+                    state_uuid,
+                    AUSTIN_WARM_LAT,
+                    AUSTIN_WARM_LON,
+                    max_zoom=AUSTIN_WARM_MAX_ZOOM,
+                    debug=debug,
+                )
+                _save_cached_state_context(state_uuid, entry_zoom)
+                _log.info(
+                    "Austin discovery warm-start ok: state_uuid=%s entry_zoom=%s",
+                    state_uuid,
+                    entry_zoom,
+                )
+                return
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+
+        _log.warning("Austin discovery warm-start failed: %s", last_error or "no state candidates")
+    except Exception as exc:
+        _log.warning("Austin discovery warm-start failed: %s: %s", type(exc).__name__, exc)
+
+
 # --------------------------
 # PUBLIC FUNCTION
 # --------------------------
@@ -600,7 +791,7 @@ def fetch_austin_energy_outages(
     lon: float,
     max_radius_km: float = 16.1,
     fallback_radius_km: float = 40.2,
-    max_zoom: int = 12,
+    max_zoom: int = 14,
     neighbor_depth: int = 1,
     drill_neighbor_depth: int = 1,
     debug: bool = False,
@@ -613,72 +804,125 @@ def fetch_austin_energy_outages(
     """
     timers = _Timers(t0=time.perf_counter())
     session = requests.Session()
+    if debug and not AUSTIN_SSL_VERIFY:
+        _dbg(debug, "TLS verify disabled via AUSTIN_SSL_VERIFY=false")
+    if debug and AUSTIN_SSL_CA_BUNDLE:
+        _dbg(debug, f"TLS CA bundle override via AUSTIN_SSL_CA_BUNDLE={AUSTIN_SSL_CA_BUNDLE}")
 
-    # ---- sanity gate ----
-    t_sanity0 = time.perf_counter()
-    blob = _fetch_interval_blob(session, debug=debug)
-    if isinstance(blob, dict):
-        active_outages, affected_customers = _get_kubra_totals(blob)
-        _dbg(debug, f"SANITY: active_outages={active_outages} affected_customers={affected_customers}")
-        if active_outages == 0 and (affected_customers in (0, None)):
-            timers.sanity += time.perf_counter() - t_sanity0
-            if debug:
-                _dbg(debug, f"timing summary: total={timers.total():.3f}s sanity={timers.sanity:.3f}s")
-            return {"nearest": None, "outages": []}
-    else:
-        _dbg(debug, "SANITY: interval blob not available; proceeding with tile pipeline")
-    timers.sanity += time.perf_counter() - t_sanity0
+    cached_state_uuid, cached_entry_zoom = _load_cached_state_context()
+    state_candidates: List[str] = []
+    for candidate in (AUSTIN_STATE_UUID, cached_state_uuid):
+        if candidate and candidate not in state_candidates:
+            state_candidates.append(candidate)
 
-    # ---- state UUID candidates (rotation fallback) ----
-    state_candidates: List[str] = [AUSTIN_LOCKED_STATE_UUID]
-    cached = _load_cached_state_uuid()
-    if cached and cached not in state_candidates:
-        state_candidates.append(cached)
-
-    # ---- discovery + fetch using first working state uuid ----
+    # ---- fast path: reuse cached state + entry zoom when available ----
     chosen_state: Optional[str] = None
     entry_zoom: Optional[int] = None
     base_outs: List[Dict[str, Any]] = []
 
-    t_dis0 = time.perf_counter()
-    last_probe_err: Optional[str] = None
+    fast_zoom: Optional[int] = None
+    if AUSTIN_ENTRY_ZOOM:
+        fast_zoom = _safe_int(AUSTIN_ENTRY_ZOOM)
+    elif cached_entry_zoom is not None:
+        fast_zoom = cached_entry_zoom
 
-    for state_uuid in state_candidates:
-        try:
-            z = _probe_entry_zoom(session, state_uuid, lat, lon, max_zoom=max_zoom, debug=debug)
-        except Exception as e:
-            last_probe_err = str(e)
-            continue
+    if state_candidates and fast_zoom is not None:
+        for state_uuid in state_candidates:
+            t_fetch0 = time.perf_counter()
+            tiles_fetched, outs = _fetch_tiles(
+                session=session,
+                state_uuid=state_uuid,
+                cluster_level=AUSTIN_ENTRY_CLUSTER_LEVEL,
+                zoom=fast_zoom,
+                lat=lat,
+                lon=lon,
+                neighbor_depth=neighbor_depth,
+                debug=debug,
+            )
+            timers.fetch += time.perf_counter() - t_fetch0
+            _dbg(debug, f"fast-path fetch counts: tiles_fetched={tiles_fetched} feature_count={len(outs)}")
+            if outs:
+                chosen_state = state_uuid
+                entry_zoom = fast_zoom
+                base_outs = outs
+                break
 
-        chosen_state = state_uuid
-        entry_zoom = z
-        break
+    # ---- sanity gate ----
+    if chosen_state is None:
+        t_sanity0 = time.perf_counter()
+        blob = _fetch_interval_blob(session, debug=debug)
+        if isinstance(blob, dict):
+            active_outages, affected_customers = _get_kubra_totals(blob)
+            _dbg(debug, f"SANITY: active_outages={active_outages} affected_customers={affected_customers}")
+            if active_outages == 0 and (affected_customers in (0, None)):
+                timers.sanity += time.perf_counter() - t_sanity0
+                if debug:
+                    _dbg(debug, f"timing summary: total={timers.total():.3f}s sanity={timers.sanity:.3f}s")
+                return {"nearest": None, "outages": []}
+        else:
+            _dbg(debug, "SANITY: interval blob not available; proceeding with tile pipeline")
+        timers.sanity += time.perf_counter() - t_sanity0
 
-    timers.discovery += time.perf_counter() - t_dis0
+    # ---- state UUID candidates (rotation fallback) ----
+    if chosen_state is None:
+        current_state = _fetch_current_state_uuid(session, debug=debug)
+        if current_state:
+            # Prefer authoritative current state to avoid stale incident artifacts.
+            state_candidates.append(current_state)
+        else:
+            # Only use static/cached fallbacks when current state is unavailable.
+            state_candidates.append(AUSTIN_LOCKED_STATE_UUID)
+            if cached_state_uuid and cached_state_uuid not in state_candidates:
+                state_candidates.append(cached_state_uuid)
 
-    if chosen_state is None or entry_zoom is None:
-        raise _err(last_probe_err or "Could not initialize Austin tile probing")
+    if chosen_state is None:
+        # ---- discovery + fetch using first working state uuid ----
+        t_dis0 = time.perf_counter()
+        last_probe_err: Optional[str] = None
 
-    _dbg(debug, f"discovered dataset_uuid={AUSTIN_DATASET_UUID} state_uuid={chosen_state}")
-    _dbg(debug, f"discovered shard_scheme=last3_rev entry_zoom={entry_zoom}")
+        for state_uuid in state_candidates:
+            try:
+                z = _probe_entry_zoom(session, state_uuid, lat, lon, max_zoom=max_zoom, debug=debug)
+            except Exception as e:
+                last_probe_err = str(e)
+                continue
 
-    # persist the working state UUID
-    _save_cached_state_uuid(chosen_state)
+            chosen_state = state_uuid
+            entry_zoom = z
+            break
 
-    # ---- base fetch ----
-    t_fetch0 = time.perf_counter()
-    tiles_fetched, outs = _fetch_tiles(
-        session=session,
-        state_uuid=chosen_state,
-        cluster_level=AUSTIN_ENTRY_CLUSTER_LEVEL,
-        zoom=entry_zoom,
-        lat=lat,
-        lon=lon,
-        neighbor_depth=neighbor_depth,
-        debug=debug,
-    )
-    timers.fetch += time.perf_counter() - t_fetch0
-    _dbg(debug, f"fetch counts: tiles_fetched={tiles_fetched} feature_count={len(outs)}")
+        timers.discovery += time.perf_counter() - t_dis0
+
+        if chosen_state is None or entry_zoom is None:
+            raise _err(last_probe_err or "Could not initialize Austin tile probing")
+
+        _dbg(debug, f"discovered dataset_uuid={AUSTIN_DATASET_UUID} state_uuid={chosen_state}")
+        _dbg(debug, f"discovered shard_scheme=last3_rev entry_zoom={entry_zoom}")
+
+        # persist the working state UUID and last known working zoom
+        _save_cached_state_context(chosen_state, entry_zoom)
+
+        # ---- base fetch ----
+        t_fetch0 = time.perf_counter()
+        tiles_fetched, outs = _fetch_tiles(
+            session=session,
+            state_uuid=chosen_state,
+            cluster_level=AUSTIN_ENTRY_CLUSTER_LEVEL,
+            zoom=entry_zoom,
+            lat=lat,
+            lon=lon,
+            neighbor_depth=neighbor_depth,
+            debug=debug,
+        )
+        timers.fetch += time.perf_counter() - t_fetch0
+        _dbg(debug, f"fetch counts: tiles_fetched={tiles_fetched} feature_count={len(outs)}")
+    else:
+        _dbg(debug, f"fast-path discovered dataset_uuid={AUSTIN_DATASET_UUID} state_uuid={chosen_state}")
+        _dbg(debug, f"fast-path entry_zoom={entry_zoom}")
+        _save_cached_state_context(chosen_state, entry_zoom)
+
+    if base_outs:
+        outs = base_outs
 
     base_clusters = [o for o in outs if o.get("cluster") is True]
     base_incidents = [o for o in outs if not o.get("cluster")]
@@ -686,7 +930,7 @@ def fetch_austin_energy_outages(
     # ---- drill clusters ----
     t_drill0 = time.perf_counter()
     drilled_incidents: List[Dict[str, Any]] = []
-    if base_clusters and entry_zoom < max_zoom:
+    if base_clusters and entry_zoom < max_zoom and (time.perf_counter() - timers.t0) <= 11.0:
         drilled_incidents = _drill_clusters(
             session=session,
             state_uuid=chosen_state,
@@ -696,9 +940,24 @@ def fetch_austin_energy_outages(
             drill_neighbor_depth=drill_neighbor_depth,
             debug=debug,
         )
+
+    # Austin can expose non-cluster incidents at deeper quadkeys but same cluster level.
+    same_level_incidents: List[Dict[str, Any]] = []
+    if (time.perf_counter() - timers.t0) <= 11.0:
+        same_level_incidents = _drill_same_cluster_level(
+            session=session,
+            state_uuid=chosen_state,
+            cluster_level=AUSTIN_ENTRY_CLUSTER_LEVEL,
+            start_zoom=entry_zoom,
+            max_zoom=max_zoom,
+            lat=lat,
+            lon=lon,
+            neighbor_depth=drill_neighbor_depth,
+            debug=debug,
+        )
     timers.drill += time.perf_counter() - t_drill0
 
-    normalized = base_incidents + drilled_incidents
+    normalized = base_incidents + drilled_incidents + same_level_incidents
 
     # ---- distance + radius filter ----
     with_dist: List[Dict[str, Any]] = []
@@ -714,23 +973,37 @@ def fetch_austin_energy_outages(
     if not within and fallback_radius_km and fallback_radius_km > max_radius_km:
         within = [o for o in with_dist if o["distance_km"] is not None and o["distance_km"] <= fallback_radius_km]
 
-    # ---- dedupe (id + lat/lon) ----
-    dedup: Dict[Tuple[str, int, int], Dict[str, Any]] = {}
+    # ---- dedupe ----
+    # Austin tiles can emit aliases of the same physical outage with different ids
+    # across neighboring/deeper quadkeys. Collapse by a physical+time signature first,
+    # then keep a stable representative.
+    dedup: Dict[Tuple[int, int, Optional[str], Optional[str], Optional[int]], Dict[str, Any]] = {}
     for o in within:
-        oid = o.get("id") or "Unknown"
         lat_i = int(round(float(o["latitude"]) * 1_000_000))
         lon_i = int(round(float(o["longitude"]) * 1_000_000))
-        key = (oid, lat_i, lon_i)
+        key = (
+            lat_i,
+            lon_i,
+            o.get("start_time"),
+            o.get("etr"),
+            o.get("customers_out"),
+        )
 
         if key not in dedup:
             dedup[key] = o
             continue
 
-        # prefer higher customers_out if available
+        # Prefer richer outage details, then a stable (lexicographically smaller) id.
         cur = dedup[key]
         cur_c = cur.get("customers_out") or 0
         new_c = o.get("customers_out") or 0
         if isinstance(new_c, int) and isinstance(cur_c, int) and new_c > cur_c:
+            dedup[key] = o
+            continue
+
+        cur_id = str(cur.get("id") or "")
+        new_id = str(o.get("id") or "")
+        if new_id and (not cur_id or new_id < cur_id):
             dedup[key] = o
 
     within = list(dedup.values())
