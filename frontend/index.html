@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="stylesheet" href="/static/styles.css?v=20260902a">
+  <style>
+    /* The shared stylesheet sets html/body to height:100%. When the populated
+       details panel grows taller than the viewport, the body background stops
+       at that fixed-height boundary and leaves a visible theme seam below it.
+       Keep the viewport minimum while allowing the document background to grow. */
+    html { min-height: 100%; }
+    body { height: auto; min-height: 100vh; }
+  </style>
 </head>
 
 <body>
@@ -116,9 +124,9 @@
           </div>
 
           <div class="actions">
-			<button id="openGoogleMaps" class="linkbtn" type="button" disabled>Open in Google Maps</button>
-          <button id="openOutageMap" class="linkbtn" type="button" disabled>Open Power Outage Map</button>
-			<button id="openNwsMap" class="linkbtn" type="button" disabled>Open Weather Map</button>
+            <button id="openGoogleMaps" class="linkbtn" type="button" disabled>Open in Google Maps</button>
+            <button id="openOutageMap" class="linkbtn" type="button" disabled>Open Power Outage Map</button>
+            <button id="openNwsMap" class="linkbtn" type="button" disabled>Open Weather Map</button>
           </div>
 
           <div class="panel-body">
