@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Weather &amp; Power</title>
+  <desc id="desc">Electrically charged storm cloud with lightning radiating outward.</desc>
+  <defs>
+    <linearGradient id="cloud" x1="18" y1="20" x2="76" y2="78" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17346f"/>
+      <stop offset="0.56" stop-color="#101f50"/>
+      <stop offset="1" stop-color="#22155e"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="41" y1="31" x2="57" y2="72" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f8ffff"/>
+      <stop offset="0.45" stop-color="#5ee9ff"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+    <path d="M27 44 12 35M22 52 6 52M29 61 15 70M68 44 84 34M73 52 90 52M67 62 82 72" stroke="#31ddff" stroke-width="3"/>
+    <path d="m15 35 5 0-2 5 6-2M84 34l-5 2 3 4-6-1M15 70l5-1-1-5 6 3M82 72l-5-2 1-5-6 3" stroke="#7c5cff" stroke-width="2"/>
+  </g>
+  <path d="M26 67h44c9 0 16-7 16-16 0-8-6-15-14-16-3-11-13-19-25-19-11 0-21 7-25 17C13 35 7 42 7 51c0 9 8 16 19 16Z" fill="url(#cloud)" stroke="#43e6ff" stroke-width="3" filter="url(#glow)"/>
+  <path d="m51 30-14 25h11l-6 20 20-29H51l8-16Z" fill="url(#bolt)" stroke="#ffffff" stroke-width="1.6" filter="url(#glow)"/>
+</svg>
