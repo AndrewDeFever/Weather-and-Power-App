@@ -4,15 +4,43 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>SubReal Studios | Weather & Power Status</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260902a">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260906a">
+  <link rel="stylesheet" href="/static/styles.css?v=20260906a">
+  <style>
+    /* Allow the body background to grow with populated result content. */
+    html { min-height: 100%; }
+    body { height: auto; min-height: 100vh; }
+
+    /* Weather & Power charged-cloud identity. Keep this small and crisp so the
+       mark remains legible at header scale without changing the proven layout. */
+    .mark {
+      width: 46px;
+      height: 46px;
+      border-radius: 12px;
+      background: transparent;
+      box-shadow: none;
+      overflow: visible;
+      flex: 0 0 auto;
+    }
+    .mark::before { content: none; }
+    .mark img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      filter: drop-shadow(0 5px 12px rgba(34, 211, 238, .20));
+    }
+  </style>
 </head>
 
 <body>
   <header class="topbar">
     <div class="container">
       <div class="header-row">
-        <div class="brand" aria-label="SubReal Studios">
-          <div class="mark" title="SubReal Studios"></div>
+        <div class="brand" aria-label="SubReal Studios Weather and Power Status">
+          <div class="mark" title="Weather & Power" aria-hidden="true">
+            <img src="/static/weather-power-mark.svg?v=20260906a" alt="" />
+          </div>
           <div class="titlewrap">
             <div class="title">SubReal Studios</div>
             <div class="subtitle">Weather &amp; Power Status</div>
@@ -116,9 +144,9 @@
           </div>
 
           <div class="actions">
-			<button id="openGoogleMaps" class="linkbtn" type="button" disabled>Open in Google Maps</button>
-          <button id="openOutageMap" class="linkbtn" type="button" disabled>Open Power Outage Map</button>
-			<button id="openNwsMap" class="linkbtn" type="button" disabled>Open Weather Map</button>
+            <button id="openGoogleMaps" class="linkbtn" type="button" disabled>Open in Google Maps</button>
+            <button id="openOutageMap" class="linkbtn" type="button" disabled>Open Power Outage Map</button>
+            <button id="openNwsMap" class="linkbtn" type="button" disabled>Open Weather Map</button>
           </div>
 
           <div class="panel-body">
@@ -142,6 +170,6 @@
       </div>
     </div>
   </main>
-  <script src="/static/app.js?v=20260902a"></script>
+  <script src="/static/app.js?v=20260906a"></script>
 </body>
 </html>
