@@ -10,17 +10,18 @@
     html { min-height: 100%; }
     body { height: auto; min-height: 100vh; }
 
-    /* Storm-forward header treatment to match the approved visual direction. */
+    /* Let the atmospheric art lead. Scrims exist only where content needs contrast. */
     .topbar {
       position: sticky;
       top: 0;
       z-index: 10;
       overflow: hidden;
       background:
-        linear-gradient(90deg, rgba(5,14,31,.18), rgba(7,16,35,.56) 38%, rgba(10,18,38,.82) 72%),
+        linear-gradient(90deg, rgba(4,12,28,.34) 0%, rgba(5,13,30,.14) 42%, rgba(7,15,34,.38) 100%),
         url('/static/storm-band.svg?v=20260907a') center 44% / cover no-repeat;
-      border-bottom: 1px solid color-mix(in srgb, var(--border) 62%, #22d3ee 38%);
-      box-shadow: 0 16px 45px rgba(1, 8, 24, .34);
+      border-bottom: 1px solid rgba(90,214,239,.28);
+      box-shadow: 0 18px 48px rgba(1, 8, 24, .28);
+      backdrop-filter: none;
     }
 
     .topbar::after {
@@ -29,17 +30,14 @@
       inset: 0;
       pointer-events: none;
       background:
-        radial-gradient(circle at 12% 40%, rgba(34,211,238,.17), transparent 21rem),
-        radial-gradient(circle at 24% 28%, rgba(102,92,246,.16), transparent 24rem),
-        linear-gradient(to bottom, transparent 56%, rgba(8,18,36,.62));
-      mix-blend-mode: screen;
-      opacity: .82;
+        linear-gradient(to bottom, rgba(3,10,23,.04) 0%, rgba(3,10,23,.10) 64%, rgba(3,10,23,.30) 100%);
+      opacity: 1;
     }
 
     .topbar > .container {
       position: relative;
       z-index: 1;
-      padding-top: 20px;
+      padding-top: 18px;
       padding-bottom: 14px;
     }
 
@@ -59,24 +57,21 @@
     .brand::before {
       content: "";
       position: absolute;
-      left: -34px;
+      left: -28px;
       top: 50%;
-      width: 390px;
-      height: 150px;
+      width: 365px;
+      height: 132px;
       transform: translateY(-50%);
       border-radius: 50%;
-      background:
-        radial-gradient(ellipse at 36% 52%, rgba(20,43,82,.78), rgba(11,24,49,.24) 54%, transparent 72%),
-        radial-gradient(ellipse at 18% 38%, rgba(34,211,238,.16), transparent 48%),
-        radial-gradient(ellipse at 56% 28%, rgba(102,92,246,.18), transparent 52%);
-      filter: blur(4px);
+      background: radial-gradient(ellipse at 34% 52%, rgba(3,12,29,.66), rgba(4,14,31,.28) 54%, transparent 74%);
+      filter: blur(8px);
       z-index: -1;
       pointer-events: none;
     }
 
     .mark {
-      width: 92px;
-      height: 92px;
+      width: 88px;
+      height: 88px;
       border-radius: 20px;
       background: transparent;
       box-shadow: none;
@@ -91,9 +86,9 @@
       height: 100%;
       object-fit: contain;
       filter:
-        drop-shadow(0 0 10px rgba(230,251,255,.65))
-        drop-shadow(0 0 20px rgba(34,211,238,.52))
-        drop-shadow(0 8px 24px rgba(102,92,246,.42));
+        drop-shadow(0 0 8px rgba(230,251,255,.62))
+        drop-shadow(0 0 18px rgba(34,211,238,.40))
+        drop-shadow(0 8px 22px rgba(31,78,160,.34));
     }
 
     .titlewrap {
@@ -108,98 +103,239 @@
     .title {
       font-size: 27px;
       font-weight: 900;
-      letter-spacing: .15px;
-      background: linear-gradient(90deg, #ffffff 0%, #f1f7ff 26%, #a9efff 63%, #8b86ff 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-      text-shadow:
-        0 0 16px rgba(255,255,255,.14),
-        0 0 30px rgba(34,211,238,.23);
+      letter-spacing: .12px;
+      color: #f8fbff;
+      text-shadow: 0 2px 18px rgba(0,0,0,.34);
       white-space: nowrap;
+      background: none;
+      -webkit-background-clip: initial;
+      background-clip: initial;
     }
 
     .subtitle {
-      margin-top: 1px;
+      margin-top: 2px;
       font-size: 12px;
       font-weight: 900;
       letter-spacing: .34em;
       text-transform: uppercase;
       color: #8ff1ff;
-      text-shadow: 0 0 15px rgba(34,211,238,.32);
+      text-shadow: 0 0 14px rgba(34,211,238,.30);
       white-space: nowrap;
     }
 
     .brand-tagline {
-      margin-top: 4px;
+      margin-top: 5px;
       font-size: 10px;
       font-weight: 800;
-      letter-spacing: .28em;
+      letter-spacing: .26em;
       text-transform: uppercase;
-      color: #c7d6ea;
-      text-shadow: 0 0 12px rgba(102,92,246,.2);
+      color: #d7e2f0;
+      text-shadow: 0 2px 12px rgba(0,0,0,.32);
       white-space: nowrap;
     }
 
     .searchwrap { padding-left: 20px; }
-    .searchbar { width: min(760px, 100%); }
-    .input,
-    .btn,
+    .searchbar {
+      width: min(760px, 100%);
+      padding: 6px;
+      border: 1px solid rgba(189,227,245,.24);
+      border-radius: 15px;
+      background: rgba(5,15,34,.34);
+      box-shadow: 0 14px 34px rgba(2,9,24,.20);
+      backdrop-filter: blur(12px);
+    }
+    .input {
+      border-color: rgba(185,217,237,.28);
+      background: rgba(248,252,255,.93);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.72);
+    }
+    html[data-theme="dark"] .input {
+      background: rgba(10,24,48,.88);
+      border-color: rgba(136,176,211,.28);
+    }
+    .btn {
+      min-width: 92px;
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #665cf6, #2f95d6 62%, #22d3ee);
+      box-shadow: 0 9px 24px rgba(46,107,203,.30);
+      font-weight: 800;
+    }
     .pill,
-    .theme-toggle {
-      backdrop-filter: blur(10px);
+    .theme-toggle { backdrop-filter: blur(10px); }
+    .pill {
+      border-color: rgba(191,220,239,.26);
+      background: rgba(7,18,40,.46);
+      color: #dbe8f5;
+      box-shadow: 0 8px 22px rgba(2,9,24,.18);
     }
 
     .statusline {
-      margin-top: 2px;
-      padding-left: 4px;
-      color: #c3d3e8;
+      width: fit-content;
+      margin-top: 3px;
+      padding: 5px 9px;
+      border-radius: 8px;
+      background: rgba(4,13,30,.26);
+      color: #d6e2ef;
+      font-size: 11px;
+      backdrop-filter: blur(8px);
     }
 
+    /* Light mode keeps the art visible instead of turning it into a pale band. */
     html:not([data-theme="dark"]) .topbar {
       background:
-        linear-gradient(90deg, rgba(242,248,255,.3), rgba(238,245,255,.72) 38%, rgba(245,248,255,.9) 76%),
+        linear-gradient(90deg, rgba(237,246,255,.16) 0%, rgba(238,247,255,.06) 44%, rgba(234,244,255,.18) 100%),
         url('/static/storm-band.svg?v=20260907a') center 44% / cover no-repeat;
     }
     html:not([data-theme="dark"]) .topbar::after {
-      opacity: .36;
-      mix-blend-mode: normal;
-      background: linear-gradient(to bottom, rgba(255,255,255,.18), rgba(245,248,255,.76));
+      background: linear-gradient(to bottom, rgba(255,255,255,.02), rgba(225,238,250,.12));
+      opacity: .42;
+    }
+    html:not([data-theme="dark"]) .brand::before {
+      background: radial-gradient(ellipse at 34% 52%, rgba(241,248,255,.56), rgba(232,243,252,.18) 56%, transparent 74%);
     }
     html:not([data-theme="dark"]) .title {
-      background: linear-gradient(90deg, #13233a 0%, #244e82 38%, #167ca6 70%, #5c55df 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      text-shadow: none;
+      color: #10233b;
+      text-shadow: 0 1px 1px rgba(255,255,255,.38), 0 4px 18px rgba(205,226,243,.30);
     }
-    html:not([data-theme="dark"]) .subtitle { color: #126fa0; text-shadow: none; }
-    html:not([data-theme="dark"]) .brand-tagline { color: #53657c; text-shadow: none; }
-    html:not([data-theme="dark"]) .statusline { color: #526378; }
+    html:not([data-theme="dark"]) .subtitle { color: #0b678f; text-shadow: 0 1px 10px rgba(255,255,255,.46); }
+    html:not([data-theme="dark"]) .brand-tagline { color: #344b63; text-shadow: 0 1px 8px rgba(255,255,255,.52); }
+    html:not([data-theme="dark"]) .statusline {
+      color: #31485e;
+      background: rgba(248,252,255,.56);
+    }
+    html:not([data-theme="dark"]) .pill {
+      color: #31485e;
+      background: rgba(250,253,255,.68);
+      border-color: rgba(94,134,164,.22);
+    }
+    html:not([data-theme="dark"]) .searchbar {
+      background: rgba(247,252,255,.48);
+      border-color: rgba(108,156,190,.22);
+      box-shadow: 0 14px 30px rgba(51,83,116,.10);
+    }
+
+    /* Main content: operational dashboard first, decoration second. */
+    main .container {
+      padding-top: 30px;
+      padding-bottom: 10px;
+    }
+    .hgroup {
+      margin-bottom: 18px;
+      padding: 0 2px;
+    }
+    .hgroup h1 {
+      font-size: clamp(22px, 2vw, 30px);
+      font-weight: 850;
+      letter-spacing: -.025em;
+    }
+    .hint {
+      max-width: 820px;
+      margin-top: 7px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .grid { gap: 16px; }
+    .card {
+      position: relative;
+      min-height: 122px;
+      padding: 17px 18px 16px;
+      border-radius: 16px;
+      border-color: color-mix(in srgb, var(--border) 82%, var(--sr-sky) 18%);
+      background:
+        linear-gradient(145deg, color-mix(in srgb, var(--surface) 96%, var(--sr-sky) 4%), var(--surface));
+      box-shadow: 0 10px 28px rgba(17,36,66,.07);
+      overflow: hidden;
+    }
+    .card::after {
+      content: "";
+      position: absolute;
+      width: 92px;
+      height: 92px;
+      right: -36px;
+      top: -40px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(34,211,238,.11), transparent 68%);
+      pointer-events: none;
+    }
+    .card .label {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .card .value {
+      font-size: 18px;
+      letter-spacing: -.01em;
+    }
+    .card .meta {
+      line-height: 1.45;
+    }
+    .accentline {
+      height: 2px;
+      margin-bottom: 10px;
+      opacity: .72;
+      background: linear-gradient(90deg, var(--sr-blue), var(--sr-sky) 62%, transparent 100%);
+    }
+    .panel {
+      margin-top: 2px;
+      border-radius: 17px;
+      border-color: color-mix(in srgb, var(--border) 86%, var(--sr-blue) 14%);
+      box-shadow: 0 14px 36px rgba(17,36,66,.08);
+    }
+    .tabs {
+      padding: 8px 10px 0;
+      gap: 4px;
+      background: color-mix(in srgb, var(--surface) 94%, var(--sr-blue-75) 6%);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab {
+      min-height: 42px;
+      border-radius: 10px 10px 0 0;
+      font-weight: 750;
+    }
+    .tab.active {
+      background: var(--surface-2);
+      box-shadow: 0 -1px 0 var(--border), 1px 0 0 var(--border), -1px 0 0 var(--border);
+    }
+    .actions {
+      padding: 12px 14px;
+      gap: 8px;
+      background: color-mix(in srgb, var(--surface-2) 94%, var(--sr-sky-75) 6%);
+      border-bottom: 1px solid var(--border);
+    }
+    .linkbtn {
+      border-radius: 9px;
+      font-weight: 700;
+    }
+    .panel-body { padding: 18px; }
+    pre { border-radius: 12px; }
 
     .storm-footer {
       position: relative;
-      margin-top: 36px;
-      min-height: 112px;
+      margin-top: 42px;
+      min-height: 126px;
       overflow: hidden;
-      border-top: 1px solid color-mix(in srgb, var(--border) 62%, #22d3ee 38%);
+      border-top: 1px solid rgba(75,201,229,.26);
       background:
-        linear-gradient(to top, rgba(6,14,29,.34), rgba(7,16,35,.78)),
+        linear-gradient(to top, rgba(4,12,27,.34), rgba(5,14,30,.10)),
         url('/static/storm-band.svg?v=20260907a') center 65% / cover no-repeat;
+      box-shadow: inset 0 18px 38px rgba(1,8,24,.10);
     }
     .storm-footer::after {
       content: "";
       position: absolute;
       inset: 0;
-      background: linear-gradient(to top, rgba(6,14,30,.28), rgba(9,18,38,.7));
+      background: linear-gradient(to top, rgba(4,11,26,.30), transparent 62%);
       pointer-events: none;
     }
     .footer-inner {
       position: relative;
       z-index: 1;
       max-width: 1600px;
-      min-height: 112px;
+      min-height: 126px;
       margin: 0 auto;
-      padding: 28px 20px;
+      padding: 30px 20px;
       display: flex;
       align-items: flex-end;
       justify-content: center;
@@ -208,28 +344,35 @@
       font-size: 10px;
       font-weight: 800;
       letter-spacing: .24em;
-      color: #bfd0e6;
+      color: #d4e0ee;
+      text-shadow: 0 2px 10px rgba(0,0,0,.34);
     }
     .footer-inner .electric {
-      color: #44ddf4;
-      text-shadow: 0 0 12px rgba(34,211,238,.42);
+      color: #6fe7f7;
+      text-shadow: 0 0 14px rgba(34,211,238,.38);
     }
     .footer-divider { opacity: .5; }
 
     html:not([data-theme="dark"]) .storm-footer {
       background:
-        linear-gradient(to top, rgba(230,239,250,.65), rgba(247,250,255,.76)),
+        linear-gradient(to top, rgba(234,244,252,.12), rgba(244,250,255,.03)),
         url('/static/storm-band.svg?v=20260907a') center 65% / cover no-repeat;
     }
     html:not([data-theme="dark"]) .storm-footer::after {
-      background: linear-gradient(to top, rgba(240,246,254,.48), rgba(247,250,255,.7));
+      background: linear-gradient(to top, rgba(239,247,253,.18), transparent 64%);
     }
-    html:not([data-theme="dark"]) .footer-inner { color: #526378; }
-    html:not([data-theme="dark"]) .footer-inner .electric { color: #116f99; text-shadow: none; }
+    html:not([data-theme="dark"]) .footer-inner {
+      color: #31485e;
+      text-shadow: 0 1px 9px rgba(255,255,255,.58);
+    }
+    html:not([data-theme="dark"]) .footer-inner .electric {
+      color: #09698e;
+      text-shadow: 0 1px 9px rgba(255,255,255,.58);
+    }
 
     @media (max-width: 1280px) {
-      .brand { min-width: 360px; gap: 14px; }
-      .mark { width: 78px; height: 78px; }
+      .brand { min-width: 350px; gap: 14px; }
+      .mark { width: 76px; height: 76px; }
       .title { font-size: 23px; }
       .subtitle { font-size: 11px; letter-spacing: .28em; }
       .brand-tagline { letter-spacing: .22em; }
@@ -237,6 +380,7 @@
     }
 
     @media (max-width: 980px) {
+      .topbar { position: relative; }
       .topbar > .container { padding-top: 14px; }
       .header-row { min-height: 0; }
       .brand { min-width: 0; gap: 10px; }
@@ -246,7 +390,17 @@
       .subtitle { font-size: 9px; letter-spacing: .2em; }
       .brand-tagline { display: none; }
       .searchwrap { padding-left: 0; }
+      .searchbar { padding: 5px; }
       .footer-inner { flex-wrap: wrap; align-content: center; align-items: center; text-align: center; }
+    }
+
+    @media (max-width: 640px) {
+      main .container { padding-top: 22px; }
+      .hgroup h1 { font-size: 22px; }
+      .card { min-height: 108px; }
+      .panel-body { padding: 14px; }
+      .actions { padding: 10px; }
+      .statusline { display: none; }
     }
   </style>
 </head>
