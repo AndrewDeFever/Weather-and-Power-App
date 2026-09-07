@@ -4,19 +4,23 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>SubReal Studios | Weather & Power Status</title>
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260906a">
-  <link rel="stylesheet" href="/static/styles.css?v=20260906a">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260906b">
+  <link rel="stylesheet" href="/static/styles.css?v=20260906b">
   <style>
     /* Allow the body background to grow with populated result content. */
     html { min-height: 100%; }
     body { height: auto; min-height: 100vh; }
 
-    /* Weather & Power charged-cloud identity. Keep this small and crisp so the
-       mark remains legible at header scale without changing the proven layout. */
+    /* Weather & Power charged-cloud identity. */
+    .brand {
+      min-width: 320px;
+      gap: 14px;
+      align-items: center;
+    }
     .mark {
-      width: 46px;
-      height: 46px;
-      border-radius: 12px;
+      width: 54px;
+      height: 54px;
+      border-radius: 14px;
       background: transparent;
       box-shadow: none;
       overflow: visible;
@@ -28,7 +32,82 @@
       width: 100%;
       height: 100%;
       object-fit: contain;
-      filter: drop-shadow(0 5px 12px rgba(34, 211, 238, .20));
+      filter: drop-shadow(0 8px 18px rgba(34, 211, 238, .32));
+    }
+    .titlewrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      line-height: 1.02;
+      min-width: 0;
+    }
+    .title {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: .15px;
+      background: linear-gradient(90deg, #ffffff 0%, #dcecff 30%, #89e7ff 72%, #7c73ff 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      text-shadow: 0 0 16px rgba(34, 211, 238, .18);
+      white-space: nowrap;
+    }
+    .brand, .titlewrap { min-width: 0; }
+    .subtitle {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .24em;
+      text-transform: uppercase;
+      color: #8fe8f2;
+      margin-top: 0;
+      white-space: nowrap;
+    }
+    .brand-tagline {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--muted) 72%, #d8e6fb 28%);
+      white-space: nowrap;
+    }
+    html[data-theme="dark"] .brand-tagline {
+      color: color-mix(in srgb, #b4c4db 74%, #d8e6fb 26%);
+      text-shadow: 0 0 12px rgba(102, 92, 246, .16);
+    }
+    html:not([data-theme="dark"]) .title {
+      background: linear-gradient(90deg, #1f2933 0%, #254d7f 36%, #176b93 68%, #665cf6 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      text-shadow: none;
+    }
+    html:not([data-theme="dark"]) .subtitle {
+      color: #2563eb;
+    }
+    @media (max-width: 1240px) {
+      .brand { min-width: 280px; }
+      .title { font-size: 16px; }
+      .subtitle { letter-spacing: .2em; }
+      .brand-tagline { letter-spacing: .14em; }
+    }
+    @media (max-width: 980px) {
+      .brand {
+        min-width: 0;
+        gap: 10px;
+      }
+      .mark {
+        width: 48px;
+        height: 48px;
+      }
+      .title {
+        font-size: 16px;
+      }
+      .subtitle {
+        font-size: 10px;
+        letter-spacing: .18em;
+      }
+      .brand-tagline {
+        display: none;
+      }
     }
   </style>
 </head>
@@ -39,11 +118,12 @@
       <div class="header-row">
         <div class="brand" aria-label="SubReal Studios Weather and Power Status">
           <div class="mark" title="Weather & Power" aria-hidden="true">
-            <img src="/static/weather-power-mark.svg?v=20260906a" alt="" />
+            <img src="/static/weather-power-mark.svg?v=20260906b" alt="" />
           </div>
           <div class="titlewrap">
             <div class="title">SubReal Studios</div>
-            <div class="subtitle">Weather &amp; Power Status</div>
+            <div class="subtitle">Weather &amp; Power</div>
+            <div class="brand-tagline">Real Conditions. Real Impact.</div>
           </div>
         </div>
 
@@ -170,6 +250,6 @@
       </div>
     </div>
   </main>
-  <script src="/static/app.js?v=20260906a"></script>
+  <script src="/static/app.js?v=20260906b"></script>
 </body>
 </html>
