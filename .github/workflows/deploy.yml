@@ -1,8 +1,6 @@
 name: "Deploy Weather-and-Power App (SAM)"
 
 on:
-  push:
-    branches: ["main"]
   workflow_dispatch: {}
 
 concurrency:
@@ -33,11 +31,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: "Verify AWS identity"
-        run: |
-          aws sts get-caller-identity
-          aws configure list
+          mask-aws-account-id: true
 
       - name: "Set up Python"
         uses: actions/setup-python@v5
@@ -53,7 +47,6 @@ jobs:
       - name: "Fail-fast: syntax + import checks"
         run: |
           python -m compileall -q .
-          # Minimal ruff ruleset: catch syntax errors, undefined names, and similar deploy-breakers.
           ruff check --select=E9,F63,F7,F82 .
 
       - name: "Run tests"
@@ -72,36 +65,34 @@ jobs:
         run: |
           set -euo pipefail
           STATUS=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "MISSING")
-          echo "Stack status: $STATUS"
 
           if [[ "$STATUS" == "MISSING" ]]; then
-            echo "Stack does not exist yet; continuing."
             exit 0
           fi
 
           if [[ "$STATUS" == *"IN_PROGRESS"* ]]; then
-            echo "Stack is busy ($STATUS). Waiting..."
             aws cloudformation wait stack-update-complete --stack-name "${STACK_NAME}" || true
             aws cloudformation wait stack-create-complete --stack-name "${STACK_NAME}" || true
           fi
 
           STATUS2=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].StackStatus" --output text)
-          echo "Stack status after wait: $STATUS2"
-
           if [[ "$STATUS2" == *"IN_PROGRESS"* ]]; then
-            echo "Stack still in progress; failing to avoid collision."
+            echo "Stack is still busy; refusing a concurrent deployment."
             exit 1
           fi
 
       - name: "SAM Build"
-        run: sam build --debug
+        run: sam build
 
       - name: "SAM Validate"
         run: sam validate
 
       - name: "SAM Deploy"
+        shell: bash
         run: |
-          sam deploy \
+          set -euo pipefail
+          LOG_FILE="$(mktemp)"
+          if ! sam deploy \
             --stack-name "${STACK_NAME}" \
             --region "${AWS_REGION}" \
             --s3-bucket "${SAM_DEPLOY_BUCKET}" \
@@ -109,62 +100,32 @@ jobs:
             --role-arn "${{ secrets.CFN_EXEC_ROLE_ARN }}" \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
-            --debug
+            >"${LOG_FILE}" 2>&1; then
+            echo "SAM deployment failed. Detailed cloud metadata is intentionally not printed in this public workflow log."
+            rm -f "${LOG_FILE}"
+            exit 1
+          fi
+          rm -f "${LOG_FILE}"
+          echo "SAM deployment completed successfully."
 
-      # --- Deploy frontend to S3 ---
-      # Expects these files to exist in the repo:
-      #   frontend/index.html
-      #   frontend/static/app.js
-      #   frontend/static/styles.css
       - name: "Deploy frontend (S3 static website)"
         shell: bash
         run: |
           set -euo pipefail
-
-          # Fail fast if the frontend isn't present (prevents silent drift)
           test -f frontend/index.html
           test -f frontend/static/app.js
           test -f frontend/static/styles.css
+          test -f frontend/static/electric-theme.css
 
-          echo "Uploading static assets (no-cache to avoid stale JS during rapid iteration)..."
           aws s3 sync frontend/static "s3://${FRONTEND_BUCKET}/static" \
             --delete \
+            --only-show-errors \
             --cache-control "no-cache, no-store, must-revalidate"
 
-          echo "Uploading index.html (no-cache)..."
           aws s3 cp frontend/index.html "s3://${FRONTEND_BUCKET}/index.html" \
+            --only-show-errors \
             --cache-control "no-cache, no-store, must-revalidate" \
             --content-type "text/html"
 
-      - name: "Dump CloudFormation events on failure"
-        if: failure()
-        run: |
-          aws cloudformation describe-stack-events \
-            --stack-name "${STACK_NAME}" \
-            --max-items 50
-
-      - name: "Continue rollback only if needed"
-        if: failure()
-        run: |
-          STATUS=$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].StackStatus" --output text)
-          echo "Current stack status: $STATUS"
-          if [[ "$STATUS" == "UPDATE_ROLLBACK_FAILED" || "$STATUS" == "UPDATE_ROLLBACK_IN_PROGRESS" ]]; then
-            aws cloudformation continue-update-rollback --stack-name "${STACK_NAME}"
-          else
-            echo "No rollback action required."
-          fi
-
-      - name: "Show stack status"
-        run: |
-          aws cloudformation describe-stacks \
-            --stack-name "${STACK_NAME}" \
-            --query "Stacks[0].StackStatus" \
-            --output text || true
-
-      - name: "Tail recent stack events"
-        run: |
-          aws cloudformation describe-stack-events \
-            --stack-name "${STACK_NAME}" \
-            --max-items 30 \
-            --query "StackEvents[].[Timestamp,ResourceStatus,LogicalResourceId,ResourceType,ResourceStatusReason]" \
-            --output table || true
+      - name: "Deployment complete"
+        run: echo "Deployment workflow completed."

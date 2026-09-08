@@ -83,7 +83,7 @@ flowchart LR
 
 ### Deployment
 
-`template.yaml` defines the SAM backend. The deployment workflow uses GitHub Actions and AWS OIDC rather than long-lived AWS access keys.
+`template.yaml` defines the SAM backend. The deployment workflow uses GitHub Actions and AWS OIDC rather than long-lived AWS access keys. Deployment is intentionally **manual-only** now that the portfolio project is finalized, which prevents routine pushes from consuming deployment minutes or changing the live environment unexpectedly.
 
 The current API Gateway defaults are deliberately bounded:
 
@@ -108,8 +108,8 @@ The public lineage includes:
 - `pip-audit` in CI
 - compile/import and Ruff failure checks
 - synthetic-data contract tests
-- publication-safety scanning for employer branding, private-key material, AWS account ARNs, and ECR registry identifiers
-- EPE credential-like values excluded from source code
+- generic publication-safety scanning for private-key material, cloud-account identifiers, private IP ranges, and internal DNS suffixes
+- credential-like provider values excluded from source code
 
 ## Local Development
 
@@ -145,25 +145,26 @@ EPE_ENCRYPTION_KEY
 
 ## Testing and CI
 
-The non-deploying portfolio workflow runs on the finalization branch and on pull requests to `main`. It performs:
+The portfolio workflow runs on pull requests to `main` and can also be started manually. It performs:
 
 1. dependency installation
 2. runtime dependency checks
 3. Python compilation and targeted Ruff checks
-4. the pytest suite
-5. `pip-audit` with no vulnerability suppressions
-6. the publication-safety scan
+4. frontend contract checks
+5. the pytest suite
+6. `pip-audit` with no vulnerability suppressions
+7. a generic publication-safety scan
 
-The production deployment workflow repeats syntax/tests/audit checks before SAM deployment.
+The separate deployment workflow is manual-only and repeats syntax/tests/audit checks before SAM deployment.
 
 ## AWS Deployment
 
-The repository includes an AWS SAM template and a GitHub Actions deployment workflow. To use the deployment workflow in another AWS account, provide your own repository variables/secrets for the deployment region, stack/bucket names, and OIDC roles.
+To use the deployment workflow in another AWS account, provide your own repository variables/secrets for the deployment region, stack/bucket names, and OIDC roles.
 
 High-level flow:
 
 ```text
-Git push to main
+Manual workflow dispatch
     -> GitHub Actions checks
     -> AWS OIDC authentication
     -> SAM build / validate / deploy
