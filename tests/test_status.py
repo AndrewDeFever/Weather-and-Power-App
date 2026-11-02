@@ -55,3 +55,12 @@ def test_api_status_wraps_provider_exceptions(monkeypatch):
     assert isinstance(data["power"], dict)
     assert isinstance(data["power"].get("meta"), dict)
     assert data["power"]["meta"].get("error")
+
+
+def test_ndfd_layer_allowlist_is_explicit():
+    from app.api import NDFD_ALLOWED_LAYERS
+
+    assert NDFD_ALLOWED_LAYERS["temperature"] == "ndfd.conus.temp"
+    assert NDFD_ALLOWED_LAYERS["pop12"] == "ndfd.conus.pop12"
+    assert NDFD_ALLOWED_LAYERS["wind"] == "ndfd.conus.wspd"
+    assert NDFD_ALLOWED_LAYERS["hazards"] == "ndfd.conus.wwa"
