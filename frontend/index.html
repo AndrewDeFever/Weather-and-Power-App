@@ -121,7 +121,16 @@
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="hazards">Hazards</button>
               </div>
               <div id="forecastMap" class="forecast-map" role="application" aria-label="Interactive weather and GIS map"></div>
-              <div id="mapStatus" class="map-status">Loading NDFD temperature…</div>
+              <div id="mapStatus" class="map-status">Loading NDFD weather…</div>
+            </div>
+            <div class="forecast-timebar" aria-label="Forecast valid time">
+              <button id="forecastPrevTime" class="time-step-btn" type="button" aria-label="Previous forecast time">‹</button>
+              <div class="forecast-time-copy">
+                <span>Forecast Time</span>
+                <strong id="forecastTimeReadout">Loading valid times…</strong>
+              </div>
+              <input id="forecastTimeSlider" class="forecast-time-slider" type="range" min="0" max="0" value="0" step="1" disabled aria-label="Forecast time" />
+              <button id="forecastNextTime" class="time-step-btn" type="button" aria-label="Next forecast time">›</button>
             </div>
           </div>
         </section>
