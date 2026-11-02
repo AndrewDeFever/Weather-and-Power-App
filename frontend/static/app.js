@@ -206,6 +206,8 @@ const headline = $("headline");
 const subhead = $("subhead");
 const mapIntelTitle = $("mapIntelTitle");
 const mapIntelMeta = $("mapIntelMeta");
+const forecastMapEl = $("forecastMap");
+const mapStatus = $("mapStatus");
 
 const c_loc = $("c_loc");
 const c_loc_meta = $("c_loc_meta");
@@ -744,6 +746,70 @@ function setTabs(activeId) {
 });
 
 // --------------------
+// Map foundation
+// --------------------
+let forecastMap = null;
+let selectedLocationMarker = null;
+
+function initForecastMap() {
+  if (!forecastMapEl) return;
+
+  if (typeof window.L === "undefined") {
+    if (mapStatus) mapStatus.textContent = "Map library failed to load.";
+    return;
+  }
+
+  forecastMap = window.L.map(forecastMapEl, {
+    zoomControl: true,
+    attributionControl: true,
+    minZoom: 3,
+    maxZoom: 18,
+  }).setView([37.5, -96.5], 4);
+
+  window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors",
+  }).addTo(forecastMap);
+
+  if (mapStatus) mapStatus.textContent = "Base map ready • Forecast overlay next";
+
+  window.setTimeout(() => forecastMap.invalidateSize(), 0);
+}
+
+function updateForecastMapLocation(latValue, lonValue, label) {
+  if (!forecastMap || typeof window.L === "undefined") return;
+
+  const lat = Number(latValue);
+  const lon = Number(lonValue);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+  forecastMap.setView([lat, lon], Math.max(forecastMap.getZoom(), 8), {
+    animate: true,
+  });
+
+  if (selectedLocationMarker) {
+    selectedLocationMarker.setLatLng([lat, lon]);
+  } else {
+    selectedLocationMarker = window.L.circleMarker([lat, lon], {
+      radius: 8,
+      weight: 3,
+      color: "#72e9ff",
+      fillColor: "#665cf6",
+      fillOpacity: 0.9,
+    }).addTo(forecastMap);
+  }
+
+  const safeLabel = String(label || "Selected location");
+  selectedLocationMarker.bindTooltip(safeLabel, {
+    direction: "top",
+    offset: [0, -8],
+    opacity: 0.95,
+  });
+
+  if (mapStatus) mapStatus.textContent = `Selected: ${safeLabel}`;
+}
+
+// --------------------
 // Main search
 // --------------------
 
@@ -830,6 +896,7 @@ function render(query, data) {
     .filter(Boolean);
   c_loc.textContent = data?.resolved?.name ? `${data.resolved.name}` : siteId;
   c_loc_meta.textContent = `Site ID: ${siteId} • ${lat}, ${lon}`;
+  updateForecastMapLocation(lat, lon, data?.resolved?.name || siteId);
 
   if (mapIntelTitle) {
     mapIntelTitle.textContent = data?.resolved?.name || siteId;
@@ -1263,5 +1330,6 @@ if (openNwsMap) {
 
 // Initial state
 initThemeToggle();
+initForecastMap();
 clearPanels();
 setStatus("ok", "Idle");
