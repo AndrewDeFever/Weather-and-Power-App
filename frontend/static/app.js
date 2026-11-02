@@ -721,7 +721,7 @@ function clearPanels() {
 }
 
 function setTabs(activeId) {
-  const tabs = ["overview", "power", "weather", "raw"];
+  const tabs = ["overview", "power", "weather"];
   for (const t of tabs) {
     $("t_" + t).classList.remove("active");
     $("t_" + t).setAttribute("aria-selected", "false");
@@ -732,7 +732,7 @@ function setTabs(activeId) {
   $("tab_" + activeId).hidden = false;
 }
 
-["overview", "power", "weather", "raw"].forEach((t) => {
+["overview", "power", "weather"].forEach((t) => {
   $("t_" + t).addEventListener("click", () => setTabs(t));
 });
 
