@@ -204,6 +204,8 @@ const themeToggle = $("themeToggle");
 
 const headline = $("headline");
 const subhead = $("subhead");
+const mapIntelTitle = $("mapIntelTitle");
+const mapIntelMeta = $("mapIntelMeta");
 
 const c_loc = $("c_loc");
 const c_loc_meta = $("c_loc_meta");
@@ -716,6 +718,11 @@ function clearPanels() {
   c_pwr.textContent = "—";
   c_pwr_meta.textContent = "—";
 
+  if (mapIntelTitle) mapIntelTitle.textContent = "No location selected";
+  if (mapIntelMeta) {
+    mapIntelMeta.textContent = "Search a demo site or coordinates to load operational context.";
+  }
+
   wxDot.className = "dot live";
   pwrDot.className = "dot";
 }
@@ -823,6 +830,18 @@ function render(query, data) {
     .filter(Boolean);
   c_loc.textContent = data?.resolved?.name ? `${data.resolved.name}` : siteId;
   c_loc_meta.textContent = `Site ID: ${siteId} • ${lat}, ${lon}`;
+
+  if (mapIntelTitle) {
+    mapIntelTitle.textContent = data?.resolved?.name || siteId;
+  }
+  if (mapIntelMeta) {
+    const intelParts = [];
+    const intelCity = normalizeCityDisplay(data?.resolved?.city);
+    const intelState = String(data?.resolved?.state || "").trim();
+    if (intelCity || intelState) intelParts.push([intelCity, intelState].filter(Boolean).join(", "));
+    if (Number.isFinite(Number(lat)) && Number.isFinite(Number(lon))) intelParts.push(`${lat}, ${lon}`);
+    mapIntelMeta.textContent = intelParts.join(" • ") || "Operational context loaded.";
+  }
 
   // Utility/provider summary
   const utility = data?.provider?.name || data?.provider?.utility || data?.resolved?.utility || "—";
