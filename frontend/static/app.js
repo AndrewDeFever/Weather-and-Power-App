@@ -750,6 +750,8 @@ function setTabs(activeId) {
 // --------------------
 let forecastMap = null;
 let selectedLocationMarker = null;
+let forecastWmsLayer = null;
+let activeForecastLayer = "temperature";
 
 function initForecastMap() {
   if (!forecastMapEl) return;
@@ -771,9 +773,57 @@ function initForecastMap() {
     attribution: "&copy; OpenStreetMap contributors",
   }).addTo(forecastMap);
 
-  if (mapStatus) mapStatus.textContent = "Base map ready • Forecast overlay next";
+  setForecastLayer(activeForecastLayer);
+
+  document.querySelectorAll("[data-forecast-layer]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const layer = button.getAttribute("data-forecast-layer");
+      if (!layer) return;
+      document.querySelectorAll("[data-forecast-layer]").forEach((item) => {
+        item.classList.toggle("active", item === button);
+      });
+      setForecastLayer(layer);
+    });
+  });
 
   window.setTimeout(() => forecastMap.invalidateSize(), 0);
+}
+
+function setForecastLayer(layerKey) {
+  if (!forecastMap || typeof window.L === "undefined") return;
+
+  activeForecastLayer = layerKey;
+  if (forecastWmsLayer) {
+    forecastMap.removeLayer(forecastWmsLayer);
+    forecastWmsLayer = null;
+  }
+
+  const labels = {
+    temperature: "temperature",
+    pop12: "precipitation probability",
+    wind: "wind speed",
+    hazards: "hazards",
+  };
+  if (mapStatus) mapStatus.textContent = `Loading NDFD ${labels[layerKey] || layerKey}…`;
+
+  forecastWmsLayer = window.L.tileLayer.wms("/api/forecast/wms", {
+    layers: layerKey,
+    format: "image/png",
+    transparent: true,
+    opacity: layerKey === "hazards" ? 0.72 : 0.58,
+    version: "1.3.0",
+    crs: window.L.CRS.EPSG3857,
+    attribution: "NWS NDFD",
+    uppercase: true,
+  });
+
+  forecastWmsLayer.on("load", () => {
+    if (mapStatus) mapStatus.textContent = `NDFD ${labels[layerKey] || layerKey} loaded`;
+  });
+  forecastWmsLayer.on("tileerror", () => {
+    if (mapStatus) mapStatus.textContent = `NDFD ${labels[layerKey] || layerKey} unavailable`;
+  });
+  forecastWmsLayer.addTo(forecastMap);
 }
 
 function updateForecastMapLocation(latValue, lonValue, label) {
