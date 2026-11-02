@@ -752,6 +752,7 @@ let forecastMap = null;
 let selectedLocationMarker = null;
 let forecastWmsLayer = null;
 let activeForecastLayer = "temperature";
+let forecastRefreshTimer = null;
 
 function initForecastMap() {
   if (!forecastMapEl) return;
@@ -774,6 +775,7 @@ function initForecastMap() {
   }).addTo(forecastMap);
 
   setForecastLayer(activeForecastLayer);
+  forecastMap.on("moveend", refreshForecastOverlay);
 
   document.querySelectorAll("[data-forecast-layer]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -789,41 +791,72 @@ function initForecastMap() {
   window.setTimeout(() => forecastMap.invalidateSize(), 0);
 }
 
-function setForecastLayer(layerKey) {
+function latLonToWebMercator(lat, lon) {
+  const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, Number(lat)));
+  const x = Number(lon) * 20037508.34 / 180;
+  let y = Math.log(Math.tan((90 + clampedLat) * Math.PI / 360)) / (Math.PI / 180);
+  y = y * 20037508.34 / 180;
+  return [x, y];
+}
+
+function refreshForecastOverlay() {
   if (!forecastMap || typeof window.L === "undefined") return;
 
+  window.clearTimeout(forecastRefreshTimer);
+  forecastRefreshTimer = window.setTimeout(() => {
+    const bounds = forecastMap.getBounds();
+    const southwest = latLonToWebMercator(bounds.getSouth(), bounds.getWest());
+    const northeast = latLonToWebMercator(bounds.getNorth(), bounds.getEast());
+    const size = forecastMap.getSize();
+    const width = Math.max(256, Math.min(1024, Math.round(size.x)));
+    const height = Math.max(256, Math.min(1024, Math.round(size.y)));
+    const bbox = [southwest[0], southwest[1], northeast[0], northeast[1]].join(",");
+
+    const url = new URL("/api/forecast/wms", window.location.origin);
+    url.searchParams.set("layer", activeForecastLayer);
+    url.searchParams.set("bbox", bbox);
+    url.searchParams.set("width", String(width));
+    url.searchParams.set("height", String(height));
+    url.searchParams.set("_", String(Date.now()));
+
+    if (forecastWmsLayer) {
+      forecastMap.removeLayer(forecastWmsLayer);
+      forecastWmsLayer = null;
+    }
+
+    const labels = {
+      temperature: "temperature",
+      pop12: "precipitation probability",
+      wind: "wind speed",
+      hazards: "hazards",
+    };
+    if (mapStatus) {
+      mapStatus.textContent = `Loading NDFD ${labels[activeForecastLayer] || activeForecastLayer}…`;
+    }
+
+    forecastWmsLayer = window.L.imageOverlay(url.toString(), bounds, {
+      opacity: activeForecastLayer === "hazards" ? 0.72 : 0.58,
+      interactive: false,
+      zIndex: 250,
+    });
+
+    forecastWmsLayer.on("load", () => {
+      if (mapStatus) {
+        mapStatus.textContent = `NDFD ${labels[activeForecastLayer] || activeForecastLayer} loaded`;
+      }
+    });
+    forecastWmsLayer.on("error", () => {
+      if (mapStatus) {
+        mapStatus.textContent = `NDFD ${labels[activeForecastLayer] || activeForecastLayer} unavailable`;
+      }
+    });
+    forecastWmsLayer.addTo(forecastMap);
+  }, 180);
+}
+
+function setForecastLayer(layerKey) {
   activeForecastLayer = layerKey;
-  if (forecastWmsLayer) {
-    forecastMap.removeLayer(forecastWmsLayer);
-    forecastWmsLayer = null;
-  }
-
-  const labels = {
-    temperature: "temperature",
-    pop12: "precipitation probability",
-    wind: "wind speed",
-    hazards: "hazards",
-  };
-  if (mapStatus) mapStatus.textContent = `Loading NDFD ${labels[layerKey] || layerKey}…`;
-
-  forecastWmsLayer = window.L.tileLayer.wms("/api/forecast/wms", {
-    layers: layerKey,
-    format: "image/png",
-    transparent: true,
-    opacity: layerKey === "hazards" ? 0.72 : 0.58,
-    version: "1.3.0",
-    crs: window.L.CRS.EPSG3857,
-    attribution: "NWS NDFD",
-    uppercase: true,
-  });
-
-  forecastWmsLayer.on("load", () => {
-    if (mapStatus) mapStatus.textContent = `NDFD ${labels[layerKey] || layerKey} loaded`;
-  });
-  forecastWmsLayer.on("tileerror", () => {
-    if (mapStatus) mapStatus.textContent = `NDFD ${labels[layerKey] || layerKey} unavailable`;
-  });
-  forecastWmsLayer.addTo(forecastMap);
+  refreshForecastOverlay();
 }
 
 function updateForecastMapLocation(latValue, lonValue, label) {
