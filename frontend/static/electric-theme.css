@@ -848,3 +848,55 @@ main .container{
   .forecast-card{grid-column:span 1;}
   .forecast-strip{grid-template-columns:repeat(3,minmax(0,1fr));}
 }
+
+/* Corporate-proven forecast valid-time control */
+.forecast-timebar{
+  display:grid;
+  grid-template-columns:auto minmax(165px,220px) 1fr auto;
+  align-items:center;
+  gap:12px;
+  padding:10px 14px;
+  border-top:1px solid rgba(72,170,235,.18);
+  background:linear-gradient(180deg,rgba(9,29,56,.96),rgba(6,21,43,.98));
+}
+.forecast-time-copy{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.forecast-time-copy span{
+  color:#7feaff;
+  font-size:.64rem;
+  font-weight:900;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.forecast-time-copy strong{
+  color:#f4f9ff;
+  font-size:.76rem;
+}
+.forecast-time-slider{
+  width:100%;
+  accent-color:#42d7ff;
+}
+.time-step-btn{
+  width:34px;
+  height:34px;
+  border:1px solid rgba(96,185,255,.24);
+  border-radius:9px;
+  background:rgba(13,42,75,.88);
+  color:#e7f7ff;
+  font-size:1.25rem;
+  cursor:pointer;
+}
+.time-step-btn:disabled{
+  opacity:.35;
+  cursor:not-allowed;
+}
+@media (max-width:700px){
+  .forecast-timebar{
+    grid-template-columns:auto 1fr auto;
+  }
+  .forecast-time-copy{grid-column:2;}
+  .forecast-time-slider{grid-column:1 / -1;grid-row:2;}
+}

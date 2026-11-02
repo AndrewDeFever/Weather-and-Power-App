@@ -6,7 +6,7 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102e">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102f">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
@@ -121,7 +121,16 @@
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="hazards">Hazards</button>
               </div>
               <div id="forecastMap" class="forecast-map" role="application" aria-label="Interactive weather and GIS map"></div>
-              <div id="mapStatus" class="map-status">Loading NDFD temperature…</div>
+              <div id="mapStatus" class="map-status">Loading NDFD weather…</div>
+            </div>
+            <div class="forecast-timebar" aria-label="Forecast valid time">
+              <button id="forecastPrevTime" class="time-step-btn" type="button" aria-label="Previous forecast time">‹</button>
+              <div class="forecast-time-copy">
+                <span>Forecast Time</span>
+                <strong id="forecastTimeReadout">Loading valid times…</strong>
+              </div>
+              <input id="forecastTimeSlider" class="forecast-time-slider" type="range" min="0" max="0" value="0" step="1" disabled aria-label="Forecast time" />
+              <button id="forecastNextTime" class="time-step-btn" type="button" aria-label="Next forecast time">›</button>
             </div>
           </div>
         </section>
@@ -139,7 +148,7 @@
                 <span class="ops-card-kicker">Forecast</span>
                 <h3 id="opsForecastTitle">Weather outlook</h3>
               </div>
-              <img id="opsCurrentWeatherIcon" class="meteocon-current" src="https://cdn.meteocons.com/1.0.0/svg/fill/not-available.svg" alt="" aria-hidden="true" />
+              <img id="opsCurrentWeatherIcon" class="meteocon-current" src="/api/weather/icon?slug=not-available" alt="" aria-hidden="true" />
             </div>
             <p id="opsForecastSummary" class="ops-card-summary">Search a site to load forecast context.</p>
             <div id="opsForecastStrip" class="forecast-strip" aria-label="Upcoming forecast periods"></div>
@@ -214,6 +223,6 @@
   </footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js?v=20261102f"></script>
+  <script src="/static/app.js?v=20261102g"></script>
 </body>
 </html>
