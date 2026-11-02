@@ -9,6 +9,7 @@ import urllib3
 
 _DEFAULT_ALLOWED_HOSTS = (
     "api.weather.gov",
+    "digital.weather.gov",
     "kubra.io",
     "outagemap.psoklahoma.com",
     "outagemap.oge.com",
@@ -55,6 +56,7 @@ OUTBOUND_SSL_CA_BUNDLE = _parse_ca_env("OUTBOUND_SSL_CA_BUNDLE")
 # Host-specific TLS overrides for outage providers.
 _HOST_TLS_ENV = {
     "api.weather.gov": ("NWS_SSL_VERIFY", "NWS_SSL_CA_BUNDLE"),
+    "digital.weather.gov": ("NDFD_SSL_VERIFY", "NDFD_SSL_CA_BUNDLE"),
     "kubra.io": ("KUBRA_SSL_VERIFY", "KUBRA_SSL_CA_BUNDLE"),
     "outagemap.psoklahoma.com": ("PSO_SSL_VERIFY", "PSO_SSL_CA_BUNDLE"),
     "outagemap.oge.com": ("OGE_SSL_VERIFY", "OGE_SSL_CA_BUNDLE"),
