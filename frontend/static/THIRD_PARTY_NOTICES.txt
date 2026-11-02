@@ -1,0 +1,13 @@
+Third-Party Notices
+
+Meteocons
+Copyright (c) 2020-present Bas Milius
+Licensed under the MIT License.
+https://github.com/basmilius/meteocons
+Weather icons are loaded from the versioned Meteocons CDN path used by the frontend.
+
+Lucide Icons
+Copyright (c) 2026 Lucide Icons and Contributors
+Licensed under the ISC License (with some icons derived from Feather under MIT).
+https://github.com/lucide-icons/lucide
+The calendar-days, triangle-alert, and utility-pole SVG geometry used in the frontend is derived from Lucide.
