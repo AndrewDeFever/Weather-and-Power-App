@@ -6,7 +6,7 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102b">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102c">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
@@ -108,12 +108,19 @@
               <div class="eyebrow">North Star Workspace</div>
               <h2>Forecast &amp; GIS Map</h2>
             </div>
-            <div class="map-workspace-state">Foundation</div>
+            <div class="map-workspace-state">Forecast Beta</div>
           </div>
           <div class="map-workspace-body">
             <div class="map-stage" aria-label="Forecast and GIS map workspace">
+              <div class="forecast-layer-rail" aria-label="Forecast layers">
+                <span class="forecast-layer-title">Forecast Layer</span>
+                <button class="forecast-layer-btn active" type="button" data-forecast-layer="temperature">Temperature</button>
+                <button class="forecast-layer-btn" type="button" data-forecast-layer="pop12">Precipitation %</button>
+                <button class="forecast-layer-btn" type="button" data-forecast-layer="wind">Wind Speed</button>
+                <button class="forecast-layer-btn" type="button" data-forecast-layer="hazards">Hazards</button>
+              </div>
               <div id="forecastMap" class="forecast-map" role="application" aria-label="Interactive weather and GIS map"></div>
-              <div id="mapStatus" class="map-status">Base map ready • Forecast overlay next</div>
+              <div id="mapStatus" class="map-status">Loading NDFD temperature…</div>
             </div>
             <aside class="map-intel" aria-label="Selected location intelligence">
               <span class="map-intel-label">Selected location</span>
@@ -160,6 +167,6 @@
   </footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js?v=20261102d"></script>
+  <script src="/static/app.js?v=20261102e"></script>
 </body>
 </html>
