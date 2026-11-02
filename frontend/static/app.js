@@ -208,6 +208,16 @@ const mapIntelTitle = $("mapIntelTitle");
 const mapIntelMeta = $("mapIntelMeta");
 const forecastMapEl = $("forecastMap");
 const mapStatus = $("mapStatus");
+const opsForecastTitle = $("opsForecastTitle");
+const opsCurrentWeatherIcon = $("opsCurrentWeatherIcon");
+const opsForecastSummary = $("opsForecastSummary");
+const opsForecastStrip = $("opsForecastStrip");
+const opsHazardTitle = $("opsHazardTitle");
+const opsHazardStatus = $("opsHazardStatus");
+const opsHazardList = $("opsHazardList");
+const opsPowerTitle = $("opsPowerTitle");
+const opsPowerStatus = $("opsPowerStatus");
+const opsPowerMeta = $("opsPowerMeta");
 
 const c_loc = $("c_loc");
 const c_loc_meta = $("c_loc_meta");
@@ -384,6 +394,124 @@ function formatPostalAddress(address, city, state, zip) {
  * XSS mitigation for backend-provided links:
  * Only allow http/https URLs. Blocks javascript:, data:, file:, etc.
  */
+const METEOCON_BASE = "https://cdn.meteocons.com/1.0.0/svg/fill";
+
+function meteoconSlug(condition, isDaytime = true) {
+  const text = String(condition || "").toLowerCase();
+  const day = isDaytime !== false;
+  if (text.includes("thunder") || text.includes("storm")) return day ? "thunderstorms-day-rain" : "thunderstorms-night-rain";
+  if (text.includes("snow") || text.includes("sleet") || text.includes("flurr")) return "snow";
+  if (text.includes("freezing rain") || text.includes("ice")) return "sleet";
+  if (text.includes("rain") || text.includes("shower") || text.includes("drizzle")) return "rain";
+  if (text.includes("fog") || text.includes("mist") || text.includes("haze")) return day ? "fog-day" : "fog-night";
+  if (text.includes("overcast") || text.includes("cloudy")) {
+    if (text.includes("partly") || text.includes("mostly")) return day ? "partly-cloudy-day" : "partly-cloudy-night";
+    return day ? "overcast-day" : "overcast-night";
+  }
+  if (text.includes("clear") || text.includes("sunny") || text.includes("fair")) return day ? "clear-day" : "clear-night";
+  if (text.includes("wind")) return "wind";
+  return day ? "partly-cloudy-day" : "partly-cloudy-night";
+}
+
+function meteoconUrl(condition, isDaytime = true) {
+  return `${METEOCON_BASE}/${meteoconSlug(condition, isDaytime)}.svg`;
+}
+
+function renderOpsCards(data) {
+  const wx = data?.weather || {};
+  const periods = Array.isArray(wx?.forecast_periods) ? wx.forecast_periods : [];
+  const cond = wx?.condition || periods[0]?.short_forecast || "Weather unavailable";
+  const currentTemp = wx?.temperature_f;
+
+  if (opsCurrentWeatherIcon) {
+    opsCurrentWeatherIcon.src = meteoconUrl(cond, true);
+  }
+  if (opsForecastTitle) {
+    opsForecastTitle.textContent = currentTemp !== null && currentTemp !== undefined
+      ? `${currentTemp}°F • ${cond}`
+      : cond;
+  }
+  if (opsForecastSummary) {
+    opsForecastSummary.textContent =
+      periods[0]?.detailed_forecast || wx?.detailedForecast || "Forecast details unavailable.";
+  }
+  if (opsForecastStrip) {
+    opsForecastStrip.innerHTML = "";
+    periods.slice(0, 5).forEach((period) => {
+      const item = document.createElement("div");
+      item.className = "forecast-period";
+      const label = document.createElement("span");
+      label.className = "forecast-period-label";
+      label.textContent = period?.name || formatIsoLocal(period?.start_time) || "Forecast";
+      const icon = document.createElement("img");
+      icon.className = "meteocon-small";
+      icon.src = meteoconUrl(period?.short_forecast, period?.is_daytime);
+      icon.alt = "";
+      icon.setAttribute("aria-hidden", "true");
+      const temp = document.createElement("strong");
+      const unit = period?.temperature_unit || "F";
+      temp.textContent = period?.temperature !== null && period?.temperature !== undefined
+        ? `${period.temperature}°${unit}`
+        : "—";
+      item.append(label, icon, temp);
+      opsForecastStrip.appendChild(item);
+    });
+  }
+
+  const alerts = Array.isArray(wx?.alerts) ? wx.alerts : [];
+  if (opsHazardTitle) {
+    opsHazardTitle.textContent = alerts.length ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}` : "No active alerts";
+  }
+  if (opsHazardStatus) {
+    opsHazardStatus.className = "ops-status " + (alerts.length ? "warn" : "good");
+    opsHazardStatus.textContent = alerts.length
+      ? `Highest severity: ${wx?.max_alert_severity || "unknown"}`
+      : "No active NWS alerts for the selected location.";
+  }
+  if (opsHazardList) {
+    opsHazardList.innerHTML = "";
+    alerts.slice(0, 3).forEach((alert) => {
+      const row = document.createElement("div");
+      row.className = "ops-list-row";
+      const event = document.createElement("strong");
+      event.textContent = alert?.event || "Weather alert";
+      const detail = document.createElement("span");
+      detail.textContent = alert?.severity ? String(alert.severity) : "Active";
+      row.append(event, detail);
+      opsHazardList.appendChild(row);
+    });
+  }
+
+  const utility = data?.provider?.name || data?.provider?.utility || data?.resolved?.utility || "Utility";
+  const outageNearby = !!data?.power?.has_outage_nearby;
+  const nearest = data?.power?.nearest || {};
+  if (opsPowerTitle) opsPowerTitle.textContent = utility;
+  if (opsPowerStatus) {
+    opsPowerStatus.className = "ops-status " + (outageNearby ? "warn" : "good");
+    opsPowerStatus.textContent = outageNearby
+      ? "Nearby outage detected"
+      : "No nearby outage detected";
+  }
+  if (opsPowerMeta) {
+    opsPowerMeta.innerHTML = "";
+    const metrics = [
+      ["Provider", data?.provider?.platform || "—"],
+      ["Customers out", nearest?.customers_out ?? "—"],
+      ["Distance", Number.isFinite(Number(nearest?.distance_miles)) ? `${Number(nearest.distance_miles).toFixed(2)} mi` : "—"],
+    ];
+    metrics.forEach(([label, value]) => {
+      const metric = document.createElement("div");
+      metric.className = "ops-metric";
+      const k = document.createElement("span");
+      k.textContent = label;
+      const v = document.createElement("strong");
+      v.textContent = String(value);
+      metric.append(k, v);
+      opsPowerMeta.appendChild(metric);
+    });
+  }
+}
+
 function safeUrl(url) {
   if (!url) return null;
   try {
@@ -720,6 +848,23 @@ function clearPanels() {
   c_pwr.textContent = "—";
   c_pwr_meta.textContent = "—";
 
+  if (opsForecastTitle) opsForecastTitle.textContent = "Weather outlook";
+  if (opsForecastSummary) opsForecastSummary.textContent = "Search a site to load forecast context.";
+  if (opsForecastStrip) opsForecastStrip.innerHTML = "";
+  if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = `${METEOCON_BASE}/not-available.svg`;
+  if (opsHazardTitle) opsHazardTitle.textContent = "No location selected";
+  if (opsHazardStatus) {
+    opsHazardStatus.className = "ops-status good";
+    opsHazardStatus.textContent = "No active hazard context loaded.";
+  }
+  if (opsHazardList) opsHazardList.innerHTML = "";
+  if (opsPowerTitle) opsPowerTitle.textContent = "Regional overview";
+  if (opsPowerStatus) {
+    opsPowerStatus.className = "ops-status good";
+    opsPowerStatus.textContent = "Search a site to load power conditions.";
+  }
+  if (opsPowerMeta) opsPowerMeta.innerHTML = "";
+
   if (mapIntelTitle) mapIntelTitle.textContent = "No location selected";
   if (mapIntelMeta) {
     mapIntelMeta.textContent = "Search a demo site or coordinates to load operational context.";
@@ -751,7 +896,7 @@ function setTabs(activeId) {
 let forecastMap = null;
 let selectedLocationMarker = null;
 let forecastWmsLayer = null;
-let activeForecastLayer = "temperature";
+let activeForecastLayer = "weather";
 let forecastRefreshTimer = null;
 
 function initForecastMap() {
@@ -825,6 +970,7 @@ function refreshForecastOverlay() {
     }
 
     const labels = {
+      weather: "weather",
       temperature: "temperature",
       pop12: "precipitation probability",
       wind: "wind speed",
@@ -961,6 +1107,7 @@ async function executeSearch(value) {
 // --------------------
 
 function render(query, data) {
+  renderOpsCards(data);
   // Headline
   const resolvedName =
     data?.resolved?.name || data?.resolved?.site_id || data?.resolved?.id || "Result";

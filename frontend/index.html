@@ -6,7 +6,7 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102d">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102e">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
@@ -114,7 +114,8 @@
             <div class="map-stage" aria-label="Forecast and GIS map workspace">
               <div class="forecast-layer-rail" aria-label="Forecast layers">
                 <span class="forecast-layer-title">Forecast Layer</span>
-                <button class="forecast-layer-btn active" type="button" data-forecast-layer="temperature">Temperature</button>
+                <button class="forecast-layer-btn active" type="button" data-forecast-layer="weather">Weather</button>
+                <button class="forecast-layer-btn" type="button" data-forecast-layer="temperature">Temperature</button>
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="pop12">Precipitation %</button>
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="wind">Wind Speed</button>
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="hazards">Hazards</button>
@@ -125,7 +126,61 @@
           </div>
         </section>
 
-        <section class="panel" aria-label="Details">
+        <section class="ops-card-grid" aria-label="Operational outlook">
+          <article class="ops-card forecast-card">
+            <div class="ops-card-head">
+              <div class="ops-card-icon forecast-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M8 2v3"></path><path d="M16 2v3"></path><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 9h18"></path>
+                  <path d="M8 13h.01"></path><path d="M12 13h.01"></path><path d="M16 13h.01"></path><path d="M8 17h.01"></path><path d="M12 17h.01"></path><path d="M16 17h.01"></path>
+                </svg>
+              </div>
+              <div>
+                <span class="ops-card-kicker">Forecast</span>
+                <h3 id="opsForecastTitle">Weather outlook</h3>
+              </div>
+              <img id="opsCurrentWeatherIcon" class="meteocon-current" src="https://cdn.meteocons.com/1.0.0/svg/fill/not-available.svg" alt="" aria-hidden="true" />
+            </div>
+            <p id="opsForecastSummary" class="ops-card-summary">Search a site to load forecast context.</p>
+            <div id="opsForecastStrip" class="forecast-strip" aria-label="Upcoming forecast periods"></div>
+          </article>
+
+          <article class="ops-card hazards-card">
+            <div class="ops-card-head">
+              <div class="ops-card-icon hazards-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path>
+                  <path d="M12 9v4"></path><path d="M12 17h.01"></path>
+                </svg>
+              </div>
+              <div>
+                <span class="ops-card-kicker">Hazards &amp; Advisories</span>
+                <h3 id="opsHazardTitle">No location selected</h3>
+              </div>
+            </div>
+            <div id="opsHazardStatus" class="ops-status good">No active hazard context loaded.</div>
+            <div id="opsHazardList" class="ops-list"></div>
+          </article>
+
+          <article class="ops-card power-card">
+            <div class="ops-card-head">
+              <div class="ops-card-icon power-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2v20"></path><path d="M2 5h20"></path><path d="M3 3v2"></path><path d="M7 3v2"></path>
+                  <path d="M17 3v2"></path><path d="M21 3v2"></path><path d="m19 5-7 7-7-7"></path>
+                </svg>
+              </div>
+              <div>
+                <span class="ops-card-kicker">Power Conditions</span>
+                <h3 id="opsPowerTitle">Regional overview</h3>
+              </div>
+            </div>
+            <div id="opsPowerStatus" class="ops-status good">Search a site to load power conditions.</div>
+            <div id="opsPowerMeta" class="ops-metrics"></div>
+          </article>
+        </section>
+
+        <section class="panel legacy-panel" aria-label="Legacy details" hidden aria-hidden="true">
           <div class="tabs" role="tablist" aria-label="Details tabs">
             <button class="tab active" role="tab" aria-selected="true" aria-controls="tab_overview" id="t_overview" type="button">Overview</button>
             <button class="tab" role="tab" aria-selected="false" aria-controls="tab_power" id="t_power" type="button">Power</button>
@@ -159,6 +214,6 @@
   </footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js?v=20261102e"></script>
+  <script src="/static/app.js?v=20261102f"></script>
 </body>
 </html>

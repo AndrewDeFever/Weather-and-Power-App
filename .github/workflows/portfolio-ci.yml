@@ -52,6 +52,10 @@ jobs:
           grep -q 'id="forecastMap"' frontend/index.html
           grep -q 'initForecastMap' frontend/static/app.js
           grep -q 'leaflet@1.9.4' frontend/index.html
+          grep -q 'data-forecast-layer="weather"' frontend/index.html
+          grep -q 'class="ops-card-grid"' frontend/index.html
+          grep -q 'cdn.meteocons.com/1.0.0' frontend/index.html
+          grep -q 'forecast_periods' frontend/static/app.js
           if grep -RniE 'Raw JSON|tab_raw|t_raw|id="raw"' frontend/index.html frontend/static/app.js; then
             echo "User-facing Raw JSON diagnostics must not be exposed in the product UI."
             exit 1

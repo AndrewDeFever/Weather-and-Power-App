@@ -282,6 +282,7 @@ def empty_weather(error: Optional[str] = None) -> Dict[str, Any]:
         "has_weather_alert": False,
         "max_alert_severity": "none",
         "alerts": [],
+        "forecast_periods": [],
     }
     if error:
         weather["error"] = error
@@ -402,6 +403,7 @@ def _resolve_site(query_text: str) -> Tuple[Optional[str], Optional[Dict[str, An
 
 NDFD_WMS = "https://digital.weather.gov/ndfd.conus/wms"
 NDFD_ALLOWED_LAYERS = {
+    "weather": "ndfd.conus.wx",
     "temperature": "ndfd.conus.t",
     "pop12": "ndfd.conus.pop12",
     "wind": "ndfd.conus.windspd",
@@ -499,6 +501,22 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
             forecast_response.raise_for_status()
             periods = (forecast_response.json().get("properties") or {}).get("periods") or []
             if periods:
+                out["forecast_periods"] = [
+                    {
+                        "name": p.get("name"),
+                        "start_time": p.get("startTime"),
+                        "end_time": p.get("endTime"),
+                        "is_daytime": p.get("isDaytime"),
+                        "temperature": p.get("temperature"),
+                        "temperature_unit": p.get("temperatureUnit"),
+                        "wind_speed": p.get("windSpeed"),
+                        "wind_direction": p.get("windDirection"),
+                        "short_forecast": p.get("shortForecast"),
+                        "detailed_forecast": p.get("detailedForecast"),
+                    }
+                    for p in periods[:6]
+                    if isinstance(p, dict)
+                ]
                 period = periods[0] or {}
                 temperature = period.get("temperature")
                 if out.get("temperature_f") is None and isinstance(temperature, (int, float)):
