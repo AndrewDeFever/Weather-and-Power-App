@@ -65,3 +65,36 @@ def test_ndfd_layer_allowlist_is_explicit():
     assert NDFD_ALLOWED_LAYERS["pop12"] == "ndfd.conus.pop12"
     assert NDFD_ALLOWED_LAYERS["wind"] == "ndfd.conus.windspd"
     assert NDFD_ALLOWED_LAYERS["hazards"] == "ndfd.conus.wwa"
+
+
+def test_public_weather_defaults_to_live_fetch():
+    assert api_mod.WEATHER_CACHE_TTL_S == 0
+
+
+def test_meteocon_allowlist_is_bounded():
+    assert "clear-day" in api_mod.METEOCON_ALLOWED_SLUGS
+    assert "thunderstorms-day-rain" in api_mod.METEOCON_ALLOWED_SLUGS
+
+
+def test_ndfd_times_parser_extracts_vtit():
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(
+        """
+        <WMS_Capabilities>
+          <Capability>
+            <Layer>
+              <Layer>
+                <Name>ndfd.conus.wx</Name>
+                <Dimension name="VTIT">2026-11-02T18:00:00Z,2026-11-02T21:00:00Z</Dimension>
+              </Layer>
+            </Layer>
+          </Capability>
+        </WMS_Capabilities>
+        """
+    )
+    parsed = api_mod._extract_ndfd_times_by_layer(root)
+    assert parsed["ndfd.conus.wx"] == [
+        "2026-11-02T18:00:00Z",
+        "2026-11-02T21:00:00Z",
+    ]
