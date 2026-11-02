@@ -60,6 +60,7 @@ def test_api_status_wraps_provider_exceptions(monkeypatch):
 def test_ndfd_layer_allowlist_is_explicit():
     from app.api import NDFD_ALLOWED_LAYERS
 
+    assert NDFD_ALLOWED_LAYERS["weather"] == "ndfd.conus.wx"
     assert NDFD_ALLOWED_LAYERS["temperature"] == "ndfd.conus.t"
     assert NDFD_ALLOWED_LAYERS["pop12"] == "ndfd.conus.pop12"
     assert NDFD_ALLOWED_LAYERS["wind"] == "ndfd.conus.windspd"
