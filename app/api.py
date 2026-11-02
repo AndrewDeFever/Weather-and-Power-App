@@ -402,9 +402,9 @@ def _resolve_site(query_text: str) -> Tuple[Optional[str], Optional[Dict[str, An
 
 NDFD_WMS = "https://digital.weather.gov/ndfd.conus/wms"
 NDFD_ALLOWED_LAYERS = {
-    "temperature": "ndfd.conus.temp",
+    "temperature": "ndfd.conus.t",
     "pop12": "ndfd.conus.pop12",
-    "wind": "ndfd.conus.wspd",
+    "wind": "ndfd.conus.windspd",
     "hazards": "ndfd.conus.wwa",
 }
 

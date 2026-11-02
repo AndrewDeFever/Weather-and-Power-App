@@ -601,3 +601,32 @@ main .container{
     width:150px;
   }
 }
+
+
+/* Map-dominant north-star refinement */
+.map-workspace-body{
+  display:block;
+  min-height:420px;
+}
+.map-stage{
+  width:100%;
+  min-height:420px;
+  border-right:0;
+}
+.forecast-map{
+  min-height:420px;
+}
+@media (min-width:1400px){
+  .map-workspace-body,
+  .map-stage,
+  .forecast-map{
+    min-height:500px;
+  }
+}
+@media (max-width:760px){
+  .map-workspace-body,
+  .map-stage,
+  .forecast-map{
+    min-height:320px;
+  }
+}
