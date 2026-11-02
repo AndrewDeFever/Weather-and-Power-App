@@ -6,7 +6,7 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20260908a">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102a">
 </head>
 
 <body>
@@ -58,25 +58,21 @@
         </div>
       </div>
 
-      <div class="statusline">
-        <span>Tip:</span>
-        <span><strong>Enter</strong> submits. <strong>Esc</strong> clears.</span>
-      </div>
-
       <div id="toast" class="toast" role="status"></div>
     </div>
   </header>
 
   <main>
     <div class="container">
-      <div class="hgroup">
+      <section class="workspace-heading" aria-labelledby="headline">
         <div>
+          <div class="eyebrow">Weather • Forecasting • GIS • Operations</div>
           <h1 id="headline">No query loaded</h1>
           <p id="subhead" class="hint">Submit a synthetic Site ID or coordinates to retrieve weather and outage proximity.</p>
         </div>
-      </div>
+      </section>
 
-      <div class="grid" aria-live="polite">
+      <div class="grid summary-grid" aria-live="polite">
         <section class="card" aria-label="Location summary">
           <div class="accentline"></div>
           <div class="label"><span class="dot ok"></span> Location</div>
@@ -103,6 +99,34 @@
           <div class="label"><span id="pwrDot" class="dot"></span> Power</div>
           <div id="c_pwr" class="value">—</div>
           <div id="c_pwr_meta" class="meta">—</div>
+        </section>
+
+        <section class="map-workspace" aria-label="Forecast and GIS workspace">
+          <div class="map-workspace-head">
+            <div>
+              <div class="eyebrow">North Star Workspace</div>
+              <h2>Forecast &amp; GIS Map</h2>
+            </div>
+            <div class="map-workspace-state">Foundation</div>
+          </div>
+          <div class="map-workspace-body">
+            <div class="map-stage" role="img" aria-label="Forecast and GIS map workspace foundation">
+              <div class="map-stage-grid" aria-hidden="true"></div>
+              <div class="map-stage-copy">
+                <span class="map-stage-kicker">Map-first workspace</span>
+                <strong>Forecast layers, timeline, sites, and GIS overlays land here.</strong>
+                <span>This surface is intentionally data-neutral until the NOAA/NDFD map pipeline is wired in the next slice.</span>
+              </div>
+            </div>
+            <aside class="map-intel" aria-label="Selected location intelligence">
+              <span class="map-intel-label">Selected location</span>
+              <strong id="mapIntelTitle">No location selected</strong>
+              <span id="mapIntelMeta">Search a demo site or coordinates to load operational context.</span>
+              <div class="map-intel-rule"></div>
+              <span class="map-intel-label">Next wiring</span>
+              <span>Forecast layer controls • shared timeline • selected-time weather • hazards</span>
+            </aside>
+          </div>
         </section>
 
         <section class="panel" aria-label="Details">
