@@ -54,7 +54,7 @@ jobs:
           grep -q 'leaflet@1.9.4' frontend/index.html
           grep -q 'data-forecast-layer="weather"' frontend/index.html
           grep -q 'class="ops-card-grid"' frontend/index.html
-          grep -q 'cdn.meteocons.com/1.0.0' frontend/index.html
+          grep -q '/api/weather/icon?slug=' frontend/index.html
           grep -q 'forecast_periods' frontend/static/app.js
           grep -q 'id="forecastTimeSlider"' frontend/index.html
           grep -q '/api/forecast/times' frontend/static/app.js
