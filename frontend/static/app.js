@@ -208,6 +208,10 @@ const mapIntelTitle = $("mapIntelTitle");
 const mapIntelMeta = $("mapIntelMeta");
 const forecastMapEl = $("forecastMap");
 const mapStatus = $("mapStatus");
+const forecastTimeSlider = $("forecastTimeSlider");
+const forecastTimeReadout = $("forecastTimeReadout");
+const forecastPrevTime = $("forecastPrevTime");
+const forecastNextTime = $("forecastNextTime");
 const opsForecastTitle = $("opsForecastTitle");
 const opsCurrentWeatherIcon = $("opsCurrentWeatherIcon");
 const opsForecastSummary = $("opsForecastSummary");
@@ -394,7 +398,7 @@ function formatPostalAddress(address, city, state, zip) {
  * XSS mitigation for backend-provided links:
  * Only allow http/https URLs. Blocks javascript:, data:, file:, etc.
  */
-const METEOCON_BASE = "https://cdn.meteocons.com/1.0.0/svg/fill";
+const METEOCON_BASE = "/api/weather/icon?slug=";
 
 function meteoconSlug(condition, isDaytime = true) {
   const text = String(condition || "").toLowerCase();
@@ -414,7 +418,7 @@ function meteoconSlug(condition, isDaytime = true) {
 }
 
 function meteoconUrl(condition, isDaytime = true) {
-  return `${METEOCON_BASE}/${meteoconSlug(condition, isDaytime)}.svg`;
+  return `${METEOCON_BASE}${encodeURIComponent(meteoconSlug(condition, isDaytime))}`;
 }
 
 function renderOpsCards(data) {
@@ -851,7 +855,7 @@ function clearPanels() {
   if (opsForecastTitle) opsForecastTitle.textContent = "Weather outlook";
   if (opsForecastSummary) opsForecastSummary.textContent = "Search a site to load forecast context.";
   if (opsForecastStrip) opsForecastStrip.innerHTML = "";
-  if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = `${METEOCON_BASE}/not-available.svg`;
+  if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = `${METEOCON_BASE}not-available`;
   if (opsHazardTitle) opsHazardTitle.textContent = "No location selected";
   if (opsHazardStatus) {
     opsHazardStatus.className = "ops-status good";
@@ -898,6 +902,8 @@ let selectedLocationMarker = null;
 let forecastWmsLayer = null;
 let activeForecastLayer = "weather";
 let forecastRefreshTimer = null;
+let forecastTimes = [];
+let selectedForecastTimeIndex = 0;
 
 function initForecastMap() {
   if (!forecastMapEl) return;
@@ -914,12 +920,20 @@ function initForecastMap() {
     maxZoom: 18,
   }).setView([37.5, -96.5], 4);
 
-  window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "&copy; OpenStreetMap contributors",
+  window.L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 16,
+    attribution: "Tiles © Esri — Esri, DeLorme, NAVTEQ",
   }).addTo(forecastMap);
 
-  setForecastLayer(activeForecastLayer);
+  forecastMap.createPane("forecastReferencePane").style.zIndex = "325";
+  window.L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 16,
+    opacity: 0.9,
+    pane: "forecastReferencePane",
+    attribution: "Tiles © Esri — Esri, DeLorme, NAVTEQ",
+  }).addTo(forecastMap);
+
+  void setForecastLayer(activeForecastLayer);
   forecastMap.on("moveend", refreshForecastOverlay);
 
   document.querySelectorAll("[data-forecast-layer]").forEach((button) => {
