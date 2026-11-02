@@ -546,3 +546,58 @@ main .container{
     min-height:260px;
   }
 }
+
+
+/* Forecast layer controls */
+.forecast-layer-rail{
+  position:absolute;
+  left:14px;
+  top:14px;
+  z-index:520;
+  width:170px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding:10px;
+  border:1px solid rgba(114,233,255,.22);
+  border-radius:14px;
+  background:rgba(5,19,41,.88);
+  backdrop-filter:blur(10px);
+  box-shadow:0 10px 30px rgba(0,0,0,.24);
+}
+.forecast-layer-title{
+  margin-bottom:2px;
+  color:#dff8ff;
+  font-size:.72rem;
+  font-weight:900;
+}
+.forecast-layer-btn{
+  width:100%;
+  border:1px solid rgba(109,153,202,.28);
+  border-radius:10px;
+  padding:8px 10px;
+  background:rgba(16,39,72,.86);
+  color:#d4e4f5;
+  font:inherit;
+  font-size:.74rem;
+  font-weight:800;
+  text-align:left;
+  cursor:pointer;
+}
+.forecast-layer-btn:hover{
+  border-color:rgba(114,233,255,.48);
+  background:rgba(24,56,94,.94);
+}
+.forecast-layer-btn.active{
+  color:#041528;
+  border-color:#7eeeff;
+  background:linear-gradient(135deg,#8cecff,#37bfff);
+  box-shadow:0 0 0 1px rgba(126,238,255,.12),0 5px 18px rgba(55,191,255,.18);
+}
+@media (max-width:760px){
+  .forecast-layer-rail{
+    left:10px;
+    top:10px;
+    width:150px;
+  }
+}
