@@ -947,6 +947,28 @@ function initForecastMap() {
     });
   });
 
+  if (forecastTimeSlider) {
+    forecastTimeSlider.addEventListener("input", () => {
+      selectedForecastTimeIndex = Number(forecastTimeSlider.value) || 0;
+      updateForecastTimeControls();
+      refreshForecastOverlay();
+    });
+  }
+  if (forecastPrevTime) {
+    forecastPrevTime.addEventListener("click", () => {
+      selectedForecastTimeIndex = Math.max(0, selectedForecastTimeIndex - 1);
+      updateForecastTimeControls();
+      refreshForecastOverlay();
+    });
+  }
+  if (forecastNextTime) {
+    forecastNextTime.addEventListener("click", () => {
+      selectedForecastTimeIndex = Math.min(forecastTimes.length - 1, selectedForecastTimeIndex + 1);
+      updateForecastTimeControls();
+      refreshForecastOverlay();
+    });
+  }
+
   window.setTimeout(() => forecastMap.invalidateSize(), 0);
 }
 
@@ -976,7 +998,12 @@ function refreshForecastOverlay() {
     url.searchParams.set("bbox", bbox);
     url.searchParams.set("width", String(width));
     url.searchParams.set("height", String(height));
-    url.searchParams.set("_", String(Date.now()));
+    const selectedVtit = forecastTimes[selectedForecastTimeIndex] || null;
+    if (!selectedVtit) {
+      if (mapStatus) mapStatus.textContent = "Forecast valid times unavailable";
+      return;
+    }
+    url.searchParams.set("vtit", selectedVtit);
 
     if (forecastWmsLayer) {
       forecastMap.removeLayer(forecastWmsLayer);
@@ -1014,9 +1041,44 @@ function refreshForecastOverlay() {
   }, 180);
 }
 
-function setForecastLayer(layerKey) {
+function updateForecastTimeControls() {
+  if (!forecastTimeSlider || !forecastTimeReadout) return;
+  const hasTimes = forecastTimes.length > 0;
+  forecastTimeSlider.disabled = !hasTimes;
+  forecastTimeSlider.min = "0";
+  forecastTimeSlider.max = hasTimes ? String(forecastTimes.length - 1) : "0";
+  forecastTimeSlider.value = hasTimes ? String(selectedForecastTimeIndex) : "0";
+  const selected = hasTimes ? forecastTimes[selectedForecastTimeIndex] : null;
+  forecastTimeReadout.textContent = selected ? (formatIsoLocal(selected) || selected) : "Forecast times unavailable";
+  if (forecastPrevTime) forecastPrevTime.disabled = !hasTimes || selectedForecastTimeIndex <= 0;
+  if (forecastNextTime) forecastNextTime.disabled = !hasTimes || selectedForecastTimeIndex >= forecastTimes.length - 1;
+}
+
+async function loadForecastTimes(layerKey) {
+  if (mapStatus) mapStatus.textContent = "Loading forecast valid times…";
+  const response = await fetch(`/api/forecast/times?layer=${encodeURIComponent(layerKey)}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`Forecast times failed (${response.status})`);
+  const payload = await response.json();
+  if (payload?.error) throw new Error(String(payload.error));
+  forecastTimes = Array.isArray(payload?.times) ? payload.times : [];
+  selectedForecastTimeIndex = 0;
+  updateForecastTimeControls();
+}
+
+async function setForecastLayer(layerKey) {
   activeForecastLayer = layerKey;
-  refreshForecastOverlay();
+  try {
+    await loadForecastTimes(layerKey);
+    refreshForecastOverlay();
+  } catch (error) {
+    forecastTimes = [];
+    selectedForecastTimeIndex = 0;
+    updateForecastTimeControls();
+    if (mapStatus) mapStatus.textContent = "Forecast valid times unavailable";
+    console.error(error);
+  }
 }
 
 function updateForecastMapLocation(latValue, lonValue, label) {
