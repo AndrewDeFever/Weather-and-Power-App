@@ -220,7 +220,6 @@ const pwrDot = $("pwrDot");
 const ov_kv = $("ov_kv");
 const pwr_kv = $("pwr_kv");
 const wx_kv = $("wx_kv");
-const raw = $("raw");
 
 // Buttons
 const openGoogleMaps = $("openGoogleMaps");
@@ -702,7 +701,6 @@ function clearPanels() {
   ov_kv.innerHTML = "";
   pwr_kv.innerHTML = "";
   wx_kv.innerHTML = "";
-  raw.textContent = "(no data)";
 
   openGoogleMaps.disabled = true;
   openOutageMap.disabled = true;
@@ -1112,8 +1110,6 @@ function render(query, data) {
     )
   );
 
-  // Raw JSON tab
-  raw.textContent = JSON.stringify(data, null, 2);
 
   // --------------------
   // Actions
