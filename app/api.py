@@ -400,6 +400,14 @@ def _resolve_site(query_text: str) -> Tuple[Optional[str], Optional[Dict[str, An
     return None, None
 
 
+NDFD_WMS = "https://digital.weather.gov/ndfd.conus/wms"
+NDFD_ALLOWED_LAYERS = {
+    "temperature": "ndfd.conus.temp",
+    "pop12": "ndfd.conus.pop12",
+    "wind": "ndfd.conus.wspd",
+    "hazards": "ndfd.conus.wwa",
+}
+
 NWS_POINTS = "https://api.weather.gov/points/{lat},{lon}"
 NWS_OBSERVATION = "https://api.weather.gov/stations/{station}/observations/latest"
 NWS_ALERTS = "https://api.weather.gov/alerts/active?point={lat},{lon}"
@@ -583,6 +591,67 @@ def _cached_power_on_timeout(
 @app.get("/healthz")
 def healthz() -> Dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/forecast/wms")
+def forecast_wms(
+    layer: str = Query("temperature", max_length=32),
+    bbox: str = Query(..., max_length=160),
+    width: int = Query(512, ge=64, le=1024),
+    height: int = Query(512, ge=64, le=1024),
+) -> Response:
+    layer_key = (layer or "").strip().lower()
+    upstream_layer = NDFD_ALLOWED_LAYERS.get(layer_key)
+    if not upstream_layer:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Unsupported forecast layer"},
+        )
+
+    bbox_parts = [part.strip() for part in bbox.split(",")]
+    if len(bbox_parts) != 4:
+        return JSONResponse(status_code=400, content={"error": "Invalid bbox"})
+    try:
+        bbox_values = [float(part) for part in bbox_parts]
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Invalid bbox"})
+    if not all(abs(value) <= 30000000 for value in bbox_values):
+        return JSONResponse(status_code=400, content={"error": "Invalid bbox"})
+
+    params = {
+        "SERVICE": "WMS",
+        "REQUEST": "GetMap",
+        "VERSION": "1.3.0",
+        "LAYERS": upstream_layer,
+        "STYLES": "",
+        "FORMAT": "image/png",
+        "TRANSPARENT": "TRUE",
+        "CRS": "EPSG:3857",
+        "BBOX": ",".join(str(value) for value in bbox_values),
+        "WIDTH": str(width),
+        "HEIGHT": str(height),
+    }
+    try:
+        upstream = limited_requests_get(
+            NDFD_WMS,
+            params=params,
+            headers={"User-Agent": "WeatherPowerStatus/1.0", "Accept": "image/png"},
+            timeout=HTTP_TIMEOUT_S,
+        )
+        upstream.raise_for_status()
+    except Exception:
+        log.exception("NDFD WMS request failed layer=%s", layer_key)
+        return JSONResponse(status_code=502, content={"error": "Forecast layer unavailable"})
+
+    content_type = (upstream.headers.get("content-type") or "").lower()
+    if "image/" not in content_type:
+        return JSONResponse(status_code=502, content={"error": "Forecast layer unavailable"})
+
+    return Response(
+        content=upstream.content,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @app.get("/api/status")
