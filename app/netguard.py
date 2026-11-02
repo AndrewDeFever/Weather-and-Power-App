@@ -10,6 +10,7 @@ import urllib3
 _DEFAULT_ALLOWED_HOSTS = (
     "api.weather.gov",
     "digital.weather.gov",
+    "cdn.meteocons.com",
     "kubra.io",
     "outagemap.psoklahoma.com",
     "outagemap.oge.com",
