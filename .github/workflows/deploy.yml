@@ -19,6 +19,7 @@ env:
   STACK_NAME: ${{ vars.STACK_NAME }}
   SAM_DEPLOY_BUCKET: ${{ vars.SAM_DEPLOY_BUCKET }}
   FRONTEND_BUCKET: ${{ vars.FRONTEND_BUCKET }}
+  CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
 
 jobs:
   deploy:
@@ -128,6 +129,21 @@ jobs:
             --only-show-errors \
             --cache-control "no-cache, no-store, must-revalidate" \
             --content-type "text/html"
+
+      - name: "Invalidate CloudFront frontend cache"
+        if: ${{ env.CLOUDFRONT_DISTRIBUTION_ID != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudfront create-invalidation \
+            --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+            --paths "/" "/index.html" \
+            --no-cli-pager >/dev/null
+          echo "CloudFront invalidation submitted for / and /index.html."
+
+      - name: "Warn when CloudFront invalidation is not configured"
+        if: ${{ env.CLOUDFRONT_DISTRIBUTION_ID == '' }}
+        run: echo "::warning::CLOUDFRONT_DISTRIBUTION_ID is not configured; frontend cache invalidation was skipped."
 
       - name: "Deployment complete"
         run: echo "Deployment workflow completed."
