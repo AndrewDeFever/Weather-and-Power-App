@@ -6,7 +6,9 @@ import logging
 import os
 import re
 import time
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
@@ -126,7 +128,7 @@ WEATHER_TOTAL_BUDGET_S = float(os.getenv("WEATHER_TOTAL_BUDGET_S", "8"))
 POWER_TOTAL_BUDGET_S = float(os.getenv("POWER_TOTAL_BUDGET_S", "14"))
 HTTP_TIMEOUT_S = float(os.getenv("HTTP_TIMEOUT_S", "5"))
 POWER_CACHE_TTL_S = int(os.getenv("POWER_CACHE_TTL_S", "300"))
-WEATHER_CACHE_TTL_S = int(os.getenv("WEATHER_CACHE_TTL_S", "300"))
+WEATHER_CACHE_TTL_S = int(os.getenv("WEATHER_CACHE_TTL_S", "0"))
 STATUS_CACHE_TTL_S = int(os.getenv("STATUS_CACHE_TTL_S", "0"))
 
 _power_cache: Dict[str, Dict[str, Any]] = {}
@@ -401,7 +403,22 @@ def _resolve_site(query_text: str) -> Tuple[Optional[str], Optional[Dict[str, An
     return None, None
 
 
-NDFD_WMS = "https://digital.weather.gov/ndfd.conus/wms"
+NDFD_WMS = "https://digital.weather.gov/ndfd/wms"
+NDFD_TIMES_CACHE_TTL_S = 1800
+NDFD_CAPABILITIES_BUCKET_HOURS = 6
+NDFD_CAPABILITIES_TIMEOUT_S = 12.0
+_NDFD_TIMES_CACHE: Dict[str, Any] = {"loaded_at": 0.0, "layers": {}, "bucket": None}
+_NDFD_TIMES_CACHE_LOCK = Lock()
+
+METEOCON_CDN_BASE = "https://cdn.meteocons.com/1.0.0/svg-static/fill"
+METEOCON_ALLOWED_SLUGS = {
+    "not-available", "clear-day", "clear-night",
+    "partly-cloudy-day", "partly-cloudy-night",
+    "overcast-day", "overcast-night", "rain", "snow", "sleet",
+    "fog-day", "fog-night", "wind",
+    "thunderstorms-day-rain", "thunderstorms-night-rain",
+}
+
 NDFD_ALLOWED_LAYERS = {
     "weather": "ndfd.conus.wx",
     "temperature": "ndfd.conus.t",
@@ -611,10 +628,111 @@ def healthz() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+def _extract_ndfd_times_by_layer(root: ET.Element) -> Dict[str, List[str]]:
+    times_by_layer: Dict[str, List[str]] = {}
+    for layer in root.iter():
+        if not str(layer.tag).endswith("Layer"):
+            continue
+        name = None
+        values: List[str] = []
+        for child in layer:
+            tag = str(child.tag)
+            if name is None and tag.endswith("Name") and child.text:
+                name = child.text.strip()
+                continue
+            if not (tag.endswith("Dimension") or tag.endswith("Extent")):
+                continue
+            if str(child.attrib.get("name", "")).lower() != "vtit":
+                continue
+            raw = " ".join(part.strip() for part in child.itertext() if part and part.strip())
+            values = [value.strip() for value in re.split(r"[\s,]+", raw) if value.strip()]
+            if values:
+                break
+        if name and values:
+            times_by_layer[name] = values
+    return times_by_layer
+
+
+def _ndfd_capabilities_bucket(now_ts: Optional[float] = None) -> str:
+    current = datetime.fromtimestamp(now_ts if now_ts is not None else time.time(), tz=timezone.utc)
+    bucket_hour = (current.hour // NDFD_CAPABILITIES_BUCKET_HOURS) * NDFD_CAPABILITIES_BUCKET_HOURS
+    return current.replace(hour=bucket_hour, minute=0, second=0, microsecond=0).strftime("%Y%m%dT%H")
+
+
+def _load_ndfd_times(layer_name: str, force: bool = False) -> List[str]:
+    now = time.time()
+    bucket = _ndfd_capabilities_bucket(now)
+    with _NDFD_TIMES_CACHE_LOCK:
+        layers = _NDFD_TIMES_CACHE.get("layers") or {}
+        cached = list(layers.get(layer_name) or []) if isinstance(layers, dict) else []
+        loaded_at = float(_NDFD_TIMES_CACHE.get("loaded_at") or 0.0)
+        cached_bucket = _NDFD_TIMES_CACHE.get("bucket")
+        if cached and not force and cached_bucket == bucket and (now - loaded_at) < NDFD_TIMES_CACHE_TTL_S:
+            return cached
+
+    response = limited_requests_get(
+        NDFD_WMS,
+        params={"REQUEST": "GetCapabilities", "_cb": bucket},
+        timeout=NDFD_CAPABILITIES_TIMEOUT_S,
+    )
+    response.raise_for_status()
+    root = ET.fromstring(response.content)
+    by_layer = _extract_ndfd_times_by_layer(root)
+    times = list(by_layer.get(layer_name) or [])
+    if not times and cached:
+        return cached
+    if not times:
+        raise RuntimeError(f"No NDFD valid times advertised for {layer_name}")
+    with _NDFD_TIMES_CACHE_LOCK:
+        _NDFD_TIMES_CACHE["loaded_at"] = now
+        _NDFD_TIMES_CACHE["bucket"] = bucket
+        _NDFD_TIMES_CACHE["layers"] = by_layer
+    return times
+
+
+@app.get("/api/forecast/times")
+def forecast_times(
+    layer: str = Query("weather", max_length=32),
+    refresh: bool = Query(False),
+) -> Dict[str, Any]:
+    layer_key = (layer or "").strip().lower()
+    upstream_layer = NDFD_ALLOWED_LAYERS.get(layer_key)
+    if not upstream_layer:
+        return {"layer": layer_key, "times": [], "error": "Unsupported forecast layer"}
+    try:
+        times = _load_ndfd_times(upstream_layer, force=refresh)
+    except Exception:
+        log.exception("NDFD times request failed layer=%s", layer_key)
+        return {"layer": layer_key, "times": [], "error": "Forecast times unavailable"}
+    return {"layer": layer_key, "upstream_layer": upstream_layer, "times": times, "error": None}
+
+
+@app.get("/api/weather/icon")
+def weather_icon(slug: str = Query("not-available", max_length=64)) -> Response:
+    icon_slug = (slug or "").strip().lower()
+    if icon_slug not in METEOCON_ALLOWED_SLUGS:
+        icon_slug = "not-available"
+    try:
+        upstream = limited_requests_get(
+            f"{METEOCON_CDN_BASE}/{icon_slug}.svg",
+            headers={"Accept": "image/svg+xml"},
+            timeout=HTTP_TIMEOUT_S,
+        )
+        upstream.raise_for_status()
+    except Exception:
+        log.exception("Meteocon request failed slug=%s", icon_slug)
+        return Response(status_code=502, content="")
+    return Response(
+        content=upstream.content,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
+
 @app.get("/api/forecast/wms")
 def forecast_wms(
-    layer: str = Query("temperature", max_length=32),
+    layer: str = Query("weather", max_length=32),
     bbox: str = Query(..., max_length=160),
+    vtit: Optional[str] = Query(None, max_length=128),
     width: int = Query(512, ge=64, le=1024),
     height: int = Query(512, ge=64, le=1024),
 ) -> Response:
@@ -649,6 +767,11 @@ def forecast_wms(
         "WIDTH": str(width),
         "HEIGHT": str(height),
     }
+    if vtit:
+        vtit_text = vtit.strip()
+        if not re.fullmatch(r"[0-9A-Za-z:+.\-TZ_]+", vtit_text):
+            return JSONResponse(status_code=400, content={"error": "Invalid forecast time"})
+        params["VTIT"] = vtit_text
     try:
         upstream = limited_requests_get(
             NDFD_WMS,
@@ -668,7 +791,7 @@ def forecast_wms(
     return Response(
         content=upstream.content,
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=300"},
+        headers={"Cache-Control": "public, max-age=60"},
     )
 
 
