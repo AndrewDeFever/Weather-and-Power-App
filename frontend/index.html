@@ -6,7 +6,8 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102a">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102b">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
 <body>
@@ -110,13 +111,9 @@
             <div class="map-workspace-state">Foundation</div>
           </div>
           <div class="map-workspace-body">
-            <div class="map-stage" role="img" aria-label="Forecast and GIS map workspace foundation">
-              <div class="map-stage-grid" aria-hidden="true"></div>
-              <div class="map-stage-copy">
-                <span class="map-stage-kicker">Map-first workspace</span>
-                <strong>Forecast layers, timeline, sites, and GIS overlays land here.</strong>
-                <span>This surface is intentionally data-neutral until the NOAA/NDFD map pipeline is wired in the next slice.</span>
-              </div>
+            <div class="map-stage" aria-label="Forecast and GIS map workspace">
+              <div id="forecastMap" class="forecast-map" role="application" aria-label="Interactive weather and GIS map"></div>
+              <div id="mapStatus" class="map-status">Base map ready • Forecast overlay next</div>
             </div>
             <aside class="map-intel" aria-label="Selected location intelligence">
               <span class="map-intel-label">Selected location</span>
@@ -162,6 +159,7 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=20261102c"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/app.js?v=20261102d"></script>
 </body>
 </html>
