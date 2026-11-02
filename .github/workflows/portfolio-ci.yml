@@ -49,6 +49,9 @@ jobs:
           grep -q 'SubReal Studios' frontend/index.html
           grep -q 'const API_ENDPOINT = "/api/status"' frontend/static/app.js
           grep -q 'DEMO_TUL_01' frontend/static/app.js
+          grep -q 'id="forecastMap"' frontend/index.html
+          grep -q 'initForecastMap' frontend/static/app.js
+          grep -q 'leaflet@1.9.4' frontend/index.html
           if grep -RniE 'Raw JSON|tab_raw|t_raw|id="raw"' frontend/index.html frontend/static/app.js; then
             echo "User-facing Raw JSON diagnostics must not be exposed in the product UI."
             exit 1
