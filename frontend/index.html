@@ -6,7 +6,7 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261103d">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261103e">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
@@ -67,10 +67,12 @@
 
       <div class="grid product-grid" aria-live="polite">
         <section class="map-workspace" aria-label="Forecast and GIS workspace">
+          <div id="forecastLegend" class="forecast-legend" aria-live="polite" aria-label="Forecast layer legend">
+            <div class="forecast-legend-loading">Loading NOAA legend…</div>
+          </div>
           <div class="map-workspace-body">
             <div class="map-stage" aria-label="Forecast and GIS map workspace">
               <div class="forecast-layer-rail" aria-label="Forecast layers">
-                <span class="forecast-layer-title">Forecast Layer</span>
                 <button class="forecast-layer-btn active" type="button" data-forecast-layer="weather">Weather</button>
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="temperature">Temperature</button>
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="pop12">Precipitation %</button>
@@ -219,6 +221,6 @@
   </footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js?v=20261103b"></script>
+  <script src="/static/app.js?v=20261103c"></script>
 </body>
 </html>
