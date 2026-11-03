@@ -1497,3 +1497,57 @@ main .container{
   .weather-trend-svg{height:125px;}
   .compact-forecast-strip{grid-template-columns:repeat(3,minmax(0,1fr));}
 }
+
+
+/* Semantic-density polish */
+.ops-card-head h3{
+  line-height:1.15;
+}
+.ops-card-summary{
+  color:#a9bfd2;
+}
+.hazards-card .ops-status:empty{
+  display:none;
+}
+.active-alert-block:not(.active){
+  min-height:auto;
+  padding:9px 11px;
+  flex-direction:row;
+  align-items:center;
+  justify-content:space-between;
+}
+.active-alert-block:not(.active) .impact-section-kicker{
+  margin-right:auto;
+}
+.active-alert-block:not(.active) strong{
+  font-size:.76rem;
+}
+.active-alert-block:not(.active) span:last-child{
+  display:none;
+}
+.forecast-outlook-block{
+  padding:14px;
+}
+.forecast-outlook-block strong{
+  font-size:.92rem;
+}
+.power-site-meta{
+  margin-top:14px;
+  padding:12px 0 0;
+}
+.power-card{
+  min-height:0;
+  align-self:start;
+}
+.power-verify-actions{
+  margin-top:12px;
+}
+.weather-trend-label{
+  font-size:8.5px;
+}
+
+@media (min-width:1101px){
+  .power-card{
+    max-height:none;
+  }
+}
