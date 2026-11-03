@@ -1185,7 +1185,7 @@ main .container{
 .map-workspace-body,
 .map-stage,
 .forecast-map{
-  min-height:clamp(500px,58vh,720px);
+  min-height:clamp(520px,62vh,760px);
 }
 .ops-card-grid{
   grid-template-columns:minmax(0,1.28fr) minmax(0,1.02fr) minmax(0,.90fr);
