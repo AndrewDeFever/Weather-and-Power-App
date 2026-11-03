@@ -334,6 +334,7 @@ def deg_to_cardinal(deg: Optional[float]) -> Optional[str]:
 SITES_PATH = Path(__file__).resolve().parent / "data" / "sites.json"
 SITES: Dict[str, Dict[str, Any]] = {}
 SITE_LOOKUP: Dict[str, str] = {}
+SITE_AMBIGUOUS_LOOKUP: set[str] = set()
 _SITES_MTIME_NS: Optional[int] = None
 _SITES_LOCK = Lock()
 
@@ -343,18 +344,37 @@ def _normalize_site_lookup(value: str) -> str:
 
 
 def _rebuild_site_index() -> None:
-    global SITE_LOOKUP
+    global SITE_LOOKUP, SITE_AMBIGUOUS_LOOKUP
     index: Dict[str, str] = {}
+    ambiguous: set[str] = set()
+
+    def add_candidate(candidate: str, site_id: str) -> None:
+        normalized = _normalize_site_lookup(candidate)
+        if not normalized or normalized in ambiguous:
+            return
+        existing = index.get(normalized)
+        if existing and existing != site_id:
+            index.pop(normalized, None)
+            ambiguous.add(normalized)
+            return
+        index[normalized] = site_id
+
     for site_id, site in SITES.items():
-        candidates = [site_id, str(site.get("name") or "")]
+        city = str(site.get("city") or "")
+        state = str(site.get("state") or "")
+        candidates = [
+            site_id,
+            str(site.get("name") or ""),
+            city,
+            f"{city} {state}".strip(),
+        ]
         aliases = site.get("aliases")
         if isinstance(aliases, list):
             candidates.extend(str(alias) for alias in aliases)
         for candidate in candidates:
-            normalized = _normalize_site_lookup(candidate)
-            if normalized and normalized not in index:
-                index[normalized] = site_id
+            add_candidate(candidate, site_id)
     SITE_LOOKUP = index
+    SITE_AMBIGUOUS_LOOKUP = ambiguous
 
 
 def _reload_sites_if_needed(force: bool = False) -> None:
@@ -397,6 +417,8 @@ def _resolve_site(query_text: str) -> Tuple[Optional[str], Optional[Dict[str, An
     indexed = SITE_LOOKUP.get(normalized)
     if indexed:
         return indexed, SITES.get(indexed)
+    if normalized in SITE_AMBIGUOUS_LOOKUP:
+        return None, None
 
     choices = list(SITE_LOOKUP.keys())
     close = difflib.get_close_matches(normalized, choices, n=1, cutoff=0.72)
