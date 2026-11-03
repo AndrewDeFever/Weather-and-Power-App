@@ -334,6 +334,7 @@ def deg_to_cardinal(deg: Optional[float]) -> Optional[str]:
 SITES_PATH = Path(__file__).resolve().parent / "data" / "sites.json"
 SITES: Dict[str, Dict[str, Any]] = {}
 SITE_LOOKUP: Dict[str, str] = {}
+SITE_AMBIGUOUS_LOOKUP: set[str] = set()
 _SITES_MTIME_NS: Optional[int] = None
 _SITES_LOCK = Lock()
 
@@ -343,7 +344,7 @@ def _normalize_site_lookup(value: str) -> str:
 
 
 def _rebuild_site_index() -> None:
-    global SITE_LOOKUP
+    global SITE_LOOKUP, SITE_AMBIGUOUS_LOOKUP
     index: Dict[str, str] = {}
     ambiguous: set[str] = set()
 
@@ -373,6 +374,7 @@ def _rebuild_site_index() -> None:
         for candidate in candidates:
             add_candidate(candidate, site_id)
     SITE_LOOKUP = index
+    SITE_AMBIGUOUS_LOOKUP = ambiguous
 
 
 def _reload_sites_if_needed(force: bool = False) -> None:
@@ -415,6 +417,8 @@ def _resolve_site(query_text: str) -> Tuple[Optional[str], Optional[Dict[str, An
     indexed = SITE_LOOKUP.get(normalized)
     if indexed:
         return indexed, SITES.get(indexed)
+    if normalized in SITE_AMBIGUOUS_LOOKUP:
+        return None, None
 
     choices = list(SITE_LOOKUP.keys())
     close = difflib.get_close_matches(normalized, choices, n=1, cutoff=0.72)
