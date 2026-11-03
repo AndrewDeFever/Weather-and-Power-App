@@ -1493,31 +1493,74 @@ function legendSwatch(label, color) {
   return item;
 }
 
+function weatherLegendIcon(kind) {
+  const icon = document.createElement("span");
+  icon.className = "weather-legend-icon";
+  icon.setAttribute("aria-hidden", "true");
+  const svg = {
+    snow: '<svg viewBox="0 0 24 24"><path d="M12 2v20M4.9 6l14.2 12M19.1 6L4.9 18M8.8 4.1 12 7.3l3.2-3.2M8.8 19.9 12 16.7l3.2 3.2M3.7 9.5 8 10.7 6.9 6.4M20.3 14.5 16 13.3l1.1 4.3M20.3 9.5 16 10.7l1.1-4.3M3.7 14.5 8 13.3l-1.1 4.3"/></svg>',
+    mix: '<svg viewBox="0 0 24 24"><path d="M8 3v8M4.6 5l6.8 4M11.4 5 4.6 9M15.5 5.5c0 2-2.6 3.2-2.6 5.8a2.6 2.6 0 0 0 5.2 0c0-2.6-2.6-3.8-2.6-5.8ZM7 15l-1.2 4M13 15l-1.2 4M19 15l-1.2 4"/></svg>',
+    ice: '<svg viewBox="0 0 24 24"><path d="M4 3v11M8 3v16M12 3v9M16 3v17M20 3v12M4 14l2 3 2-3M12 12l2 3 2-3M18 15l2 3 2-3"/></svg>',
+    rain: '<svg viewBox="0 0 24 24"><path d="M6 13h11a4 4 0 0 0 .4-8A6 6 0 0 0 6.2 6.6 3.3 3.3 0 0 0 6 13ZM7 16l-1 3M12 16l-1 3M17 16l-1 3"/></svg>',
+  }[kind] || "";
+  icon.innerHTML = svg;
+  return icon;
+}
+
+function weatherLegendRamp(label, kind, fromColor, toColor) {
+  const item = document.createElement("div");
+  item.className = "weather-legend-ramp";
+
+  const labelWrap = document.createElement("div");
+  labelWrap.className = "weather-legend-label";
+  labelWrap.append(weatherLegendIcon(kind));
+  const text = document.createElement("strong");
+  text.textContent = label;
+  labelWrap.appendChild(text);
+
+  const ramp = document.createElement("div");
+  ramp.className = "weather-legend-gradient";
+  ramp.style.background = `linear-gradient(90deg,${fromColor},${toColor})`;
+  ramp.setAttribute("aria-label", `${label} chance to likely`);
+
+  item.append(labelWrap, ramp);
+  return item;
+}
+
 function renderCategoricalForecastLegend(payload) {
   if (!forecastLegend) return;
   forecastLegend.innerHTML = "";
 
-  const head = document.createElement("div");
-  head.className = "forecast-legend-head";
-  const title = document.createElement("strong");
-  title.textContent = "Weather";
-  head.append(title);
+  const precipitation = Array.isArray(payload?.groups?.precipitation)
+    ? payload.groups.precipitation
+    : [];
+  const byLabel = new Map(precipitation.map((item) => [item.label, item.color]));
 
-  const body = document.createElement("div");
-  body.className = "forecast-legend-categories";
+  const primary = document.createElement("div");
+  primary.className = "weather-legend-primary";
+  const pairs = [
+    ["Snow", "snow", "Snow chance", "Snow likely"],
+    ["Mix", "mix", "Wintry Mix chance", "Wintry Mix likely"],
+    ["Ice", "ice", "Ice chance", "Ice likely"],
+    ["Rain", "rain", "Rain chance", "Rain likely"],
+  ];
+  pairs.forEach(([label, kind, chanceLabel, likelyLabel]) => {
+    const chance = byLabel.get(chanceLabel);
+    const likely = byLabel.get(likelyLabel);
+    if (chance && likely) {
+      primary.appendChild(weatherLegendRamp(label, kind, chance, likely));
+    }
+  });
 
-  const precip = document.createElement("div");
-  precip.className = "forecast-legend-category-group";
-  const precipitation = payload?.groups?.precipitation || [];
-  precipitation.forEach((item) => precip.appendChild(legendSwatch(item.label, item.color)));
-
+  const secondaryItems = Array.isArray(payload?.groups?.secondary)
+    ? payload.groups.secondary
+    : [];
   const secondary = document.createElement("div");
-  secondary.className = "forecast-legend-category-group secondary";
-  const secondaryItems = payload?.groups?.secondary || [];
+  secondary.className = "weather-legend-secondary";
   secondaryItems.forEach((item) => secondary.appendChild(legendSwatch(item.label, item.color)));
 
-  body.append(precip, secondary);
-  forecastLegend.append(head, body);
+  forecastLegend.append(primary);
+  if (secondaryItems.length) forecastLegend.append(secondary);
 }
 
 function formatLegendTick(value, unit) {
