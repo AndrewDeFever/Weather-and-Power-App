@@ -163,6 +163,13 @@ jobs:
           grep -q '\[22.0, -128.0\]' frontend/static/app.js
           grep -q '\[51.5, -62.0\]' frontend/static/app.js
           grep -q 'setMinZoom(forecastMap.getZoom())' frontend/static/app.js
+          grep -q '/static/vendor/leaflet/leaflet.css?v=1.9.4' frontend/index.html
+          grep -q '/static/vendor/leaflet/leaflet.js?v=1.9.4' frontend/index.html
+          grep -q '/static/vendor/leaflet/leaflet-assets.js?v=1.9.4' frontend/index.html
+          if grep -qE 'unpkg\\.com/leaflet|cdn\\.jsdelivr\\.net/.*/leaflet|cdnjs\\.cloudflare\\.com/.*/leaflet' frontend/index.html; then
+            echo "Leaflet must be served locally; runtime CDN references are not allowed."
+            exit 1
+          fi
           grep -q 'maxBoundsViscosity: 1.0' frontend/static/app.js
           grep -q 'data-theme="dark"' frontend/index.html
           if grep -q 'id="themeToggle"' frontend/index.html; then
