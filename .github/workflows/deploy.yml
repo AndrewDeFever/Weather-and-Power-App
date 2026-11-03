@@ -122,7 +122,6 @@ jobs:
 
           aws s3 sync frontend/static "s3://${FRONTEND_BUCKET}/static" \
             --delete \
-            --exclude "assets/weather-icons/*" \
             --only-show-errors \
             --cache-control "no-cache, no-store, must-revalidate"
 
