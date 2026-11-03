@@ -1617,3 +1617,54 @@ main .container{
 .hazards-card .ops-insight{
   display:none!important;
 }
+
+
+/* Hourly 24-hour forecast density */
+.weather-trend-date{
+  fill:#6f90aa;
+  font-size:8px;
+  font-weight:700;
+}
+.compact-forecast-strip{
+  grid-template-columns:repeat(9,minmax(0,1fr));
+  gap:4px;
+}
+.hourly-forecast-period{
+  min-height:88px;
+  padding:6px 3px;
+  justify-content:flex-start;
+}
+.hourly-forecast-period .forecast-period-label{
+  font-size:.55rem;
+  line-height:1.2;
+}
+.hourly-forecast-period .meteocon-small{
+  width:28px;
+  height:28px;
+  margin:4px auto 2px;
+}
+.forecast-period-condition{
+  display:block;
+  width:100%;
+  overflow:hidden;
+  color:#c7d7e5;
+  font-size:.55rem;
+  line-height:1.2;
+  text-align:center;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.forecast-period-meta{
+  display:block;
+  margin-top:2px;
+  color:#6fbce0;
+  font-size:.52rem;
+  font-weight:800;
+  text-align:center;
+}
+@media (max-width:1100px){
+  .compact-forecast-strip{grid-template-columns:repeat(5,minmax(0,1fr));}
+}
+@media (max-width:760px){
+  .compact-forecast-strip{grid-template-columns:repeat(3,minmax(0,1fr));}
+}
