@@ -1328,3 +1328,55 @@ main .container{
     grid-column:span 1;
   }
 }
+
+
+/* Power & Site operator verification workflow */
+.power-primary-metrics{
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  margin-top:18px;
+}
+.power-primary-metrics .ops-metric{
+  min-height:86px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.power-primary-metrics .ops-metric strong{
+  font-size:1rem;
+}
+.power-verify-actions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:9px;
+  margin-top:14px;
+}
+.power-action-btn{
+  min-height:42px;
+  padding:10px 12px;
+  border:1px solid rgba(87,191,239,.28);
+  border-radius:11px;
+  background:rgba(16,54,89,.55);
+  color:#dff7ff;
+  font:inherit;
+  font-size:.72rem;
+  font-weight:900;
+  cursor:pointer;
+  transition:background .15s ease,border-color .15s ease,transform .15s ease;
+}
+.power-action-btn:hover:not(:disabled){
+  border-color:rgba(107,225,255,.62);
+  background:rgba(27,91,134,.68);
+  transform:translateY(-1px);
+}
+.power-action-btn:disabled{
+  opacity:.42;
+  cursor:not-allowed;
+}
+@media (max-width:760px){
+  .power-primary-metrics{
+    grid-template-columns:1fr;
+  }
+  .power-verify-actions{
+    grid-template-columns:1fr;
+  }
+}
