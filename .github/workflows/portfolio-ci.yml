@@ -196,6 +196,16 @@ jobs:
         run: |
           pip-audit --no-deps -r requirements.txt -r requirements-dev.txt
 
+      - name: Temporary live frontend security-header probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== LIVE FRONTEND SECURITY HEADERS ==="
+          curl -sS -D - -o /dev/null https://wnp.subrealstudios.com/ \
+            | tr -d '\r' \
+            | grep -Ei '^(HTTP/|content-security-policy:|strict-transport-security:|x-content-type-options:|x-frame-options:|referrer-policy:|permissions-policy:|server:|via:|x-cache:)' \
+            || true
+
       - name: Publish-safety scan
         shell: bash
         run: |
