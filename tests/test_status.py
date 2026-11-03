@@ -253,3 +253,24 @@ def test_hazard_legend_proxy_uses_viewport_and_valid_time(monkeypatch):
     assert captured["params"]["vt"] == "2026-11-03T18:00"
     assert captured["params"]["left"] == "-11300000.0"
     assert captured["params"]["top"] == "5000000.0"
+
+
+
+def test_temperature_legend_falls_back_to_noaa_temp_alias(monkeypatch):
+    calls = []
+
+    def fake_table(element, season_code=0):
+        calls.append((element, season_code))
+        if element == "t":
+            raise RuntimeError("alias unavailable")
+        return [
+            {"value": -10.0, "color": "#010203"},
+            {"value": 110.0, "color": "#AABBCC"},
+        ]
+
+    monkeypatch.setattr(api_mod, "_load_ndfd_colortable", fake_table)
+    payload = api_mod.forecast_legend(layer="temperature", season=0)
+
+    assert payload["error"] is None
+    assert payload["element"] == "temp"
+    assert calls == [("t", 0), ("temp", 0)]
