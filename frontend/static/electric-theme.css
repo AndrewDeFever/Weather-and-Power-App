@@ -1138,3 +1138,34 @@ html,body{color-scheme:dark;}
 .ops-empty-state strong{
   color:#c9efff;
 }
+
+
+/* Forecast hazard card: NDFD selected time + NWS active-now secondary signal */
+.ops-secondary-state{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:auto;
+  padding:10px 11px;
+  border:1px solid rgba(97,163,210,.16);
+  border-radius:10px;
+  background:rgba(255,255,255,.025);
+}
+.ops-secondary-state strong{
+  color:#a9c9dd;
+  font-size:.7rem;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+}
+.ops-secondary-state span{
+  color:#d5e4ef;
+  font-size:.72rem;
+  text-align:right;
+}
+.ops-secondary-state.active{
+  border-color:rgba(255,95,77,.28);
+  background:rgba(215,66,48,.08);
+}
+.ops-secondary-state.active span{
+  color:#ffd1c9;
+}
