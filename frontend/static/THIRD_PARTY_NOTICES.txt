@@ -4,7 +4,7 @@ Meteocons
 Copyright (c) 2020-present Bas Milius
 Licensed under the MIT License.
 https://github.com/basmilius/meteocons
-Weather icons are loaded from the versioned Meteocons CDN path used by the frontend.
+Weather icons are served as static assets through the site's existing S3/CloudFront path under /static/assets/weather-icons/weather/.
 
 Lucide Icons
 Copyright (c) 2026 Lucide Icons and Contributors

@@ -54,11 +54,14 @@ jobs:
           grep -q 'leaflet@1.9.4' frontend/index.html
           grep -q 'data-forecast-layer="weather"' frontend/index.html
           grep -q 'class="ops-card-grid"' frontend/index.html
-          grep -q '/api/weather/icon?slug=' frontend/index.html
+          grep -q '/static/assets/weather-icons/weather/' frontend/index.html
           grep -q 'forecast_periods' frontend/static/app.js
           grep -q 'id="forecastTimeSlider"' frontend/index.html
+          grep -q 'id="forecastCurrentTime"' frontend/index.html
+          grep -q 'demoSiteMarkers' frontend/static/app.js
           grep -q '/api/forecast/times' frontend/static/app.js
-          grep -q '/api/weather/icon?slug=' frontend/index.html
+          grep -q '/static/assets/weather-icons/weather/' frontend/static/app.js
+          grep -q '/static/assets/weather-icons/weather/' frontend/index.html
           grep -q 'World_Light_Gray_Base' frontend/static/app.js
           if grep -RniE 'Raw JSON|tab_raw|t_raw|id="raw"' frontend/index.html frontend/static/app.js; then
             echo "User-facing Raw JSON diagnostics must not be exposed in the product UI."

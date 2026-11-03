@@ -210,6 +210,7 @@ const forecastMapEl = $("forecastMap");
 const mapStatus = $("mapStatus");
 const forecastTimeSlider = $("forecastTimeSlider");
 const forecastTimeReadout = $("forecastTimeReadout");
+const forecastCurrentTime = $("forecastCurrentTime");
 const forecastPrevTime = $("forecastPrevTime");
 const forecastNextTime = $("forecastNextTime");
 const opsForecastTitle = $("opsForecastTitle");
@@ -398,27 +399,28 @@ function formatPostalAddress(address, city, state, zip) {
  * XSS mitigation for backend-provided links:
  * Only allow http/https URLs. Blocks javascript:, data:, file:, etc.
  */
-const METEOCON_BASE = "/api/weather/icon?slug=";
+const WEATHER_ICON_BASE = "/static/assets/weather-icons/weather/";
 
 function meteoconSlug(condition, isDaytime = true) {
   const text = String(condition || "").toLowerCase();
   const day = isDaytime !== false;
-  if (text.includes("thunder") || text.includes("storm")) return day ? "thunderstorms-day-rain" : "thunderstorms-night-rain";
-  if (text.includes("snow") || text.includes("sleet") || text.includes("flurr")) return "snow";
-  if (text.includes("freezing rain") || text.includes("ice")) return "sleet";
-  if (text.includes("rain") || text.includes("shower") || text.includes("drizzle")) return "rain";
-  if (text.includes("fog") || text.includes("mist") || text.includes("haze")) return day ? "fog-day" : "fog-night";
-  if (text.includes("overcast") || text.includes("cloudy")) {
+  if (text.includes("thunder") || text.includes("storm")) return "thunderstorms";
+  if (text.includes("snow") || text.includes("sleet") || text.includes("flurr") || text.includes("freezing rain") || text.includes("ice")) return "snow";
+  if (text.includes("shower")) return day ? "partly-cloudy-day-rain" : "rain";
+  if (text.includes("rain") || text.includes("drizzle")) return "rain";
+  if (text.includes("fog") || text.includes("mist") || text.includes("haze")) return "fog";
+  if (text.includes("overcast")) return "overcast";
+  if (text.includes("cloudy")) {
     if (text.includes("partly") || text.includes("mostly")) return day ? "partly-cloudy-day" : "partly-cloudy-night";
-    return day ? "overcast-day" : "overcast-night";
+    return "cloudy";
   }
   if (text.includes("clear") || text.includes("sunny") || text.includes("fair")) return day ? "clear-day" : "clear-night";
-  if (text.includes("wind")) return "wind";
+  if (text.includes("wind") || text.includes("breez")) return "wind";
   return day ? "partly-cloudy-day" : "partly-cloudy-night";
 }
 
 function meteoconUrl(condition, isDaytime = true) {
-  return `${METEOCON_BASE}${encodeURIComponent(meteoconSlug(condition, isDaytime))}`;
+  return `${WEATHER_ICON_BASE}${encodeURIComponent(meteoconSlug(condition, isDaytime))}.svg`;
 }
 
 function renderOpsCards(data) {
@@ -855,7 +857,7 @@ function clearPanels() {
   if (opsForecastTitle) opsForecastTitle.textContent = "Weather outlook";
   if (opsForecastSummary) opsForecastSummary.textContent = "Search a site to load forecast context.";
   if (opsForecastStrip) opsForecastStrip.innerHTML = "";
-  if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = `${METEOCON_BASE}not-available`;
+  if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = `${WEATHER_ICON_BASE}partly-cloudy-day.svg`;
   if (opsHazardTitle) opsHazardTitle.textContent = "No location selected";
   if (opsHazardStatus) {
     opsHazardStatus.className = "ops-status good";
@@ -904,6 +906,25 @@ let activeForecastLayer = "weather";
 let forecastRefreshTimer = null;
 let forecastTimes = [];
 let selectedForecastTimeIndex = 0;
+let currentForecastTimeIndex = 0;
+let selectedDemoSiteId = null;
+const demoSiteMarkers = new Map();
+
+const DEMO_MARKER_STYLE = {
+  radius: 5,
+  weight: 2,
+  color: "#72e9ff",
+  fillColor: "#163e73",
+  fillOpacity: 0.86,
+};
+
+const SELECTED_MARKER_STYLE = {
+  radius: 8,
+  weight: 3,
+  color: "#b9f5ff",
+  fillColor: "#665cf6",
+  fillOpacity: 0.96,
+};
 
 function initForecastMap() {
   if (!forecastMapEl) return;
@@ -933,6 +954,7 @@ function initForecastMap() {
     attribution: "Tiles © Esri — Esri, DeLorme, NAVTEQ",
   }).addTo(forecastMap);
 
+  renderDemoSiteMarkers();
   void setForecastLayer(activeForecastLayer);
   forecastMap.on("moveend", refreshForecastOverlay);
 
@@ -950,6 +972,13 @@ function initForecastMap() {
   if (forecastTimeSlider) {
     forecastTimeSlider.addEventListener("input", () => {
       selectedForecastTimeIndex = Number(forecastTimeSlider.value) || 0;
+      updateForecastTimeControls();
+      refreshForecastOverlay();
+    });
+  }
+  if (forecastCurrentTime) {
+    forecastCurrentTime.addEventListener("click", () => {
+      selectedForecastTimeIndex = currentForecastTimeIndex;
       updateForecastTimeControls();
       refreshForecastOverlay();
     });
@@ -1041,6 +1070,23 @@ function refreshForecastOverlay() {
   }, 180);
 }
 
+function findCurrentForecastTimeIndex(times) {
+  if (!Array.isArray(times) || !times.length) return 0;
+  const now = Date.now();
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  times.forEach((value, index) => {
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) return;
+    const distance = Math.abs(timestamp - now);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
 function updateForecastTimeControls() {
   if (!forecastTimeSlider || !forecastTimeReadout) return;
   const hasTimes = forecastTimes.length > 0;
@@ -1049,7 +1095,16 @@ function updateForecastTimeControls() {
   forecastTimeSlider.max = hasTimes ? String(forecastTimes.length - 1) : "0";
   forecastTimeSlider.value = hasTimes ? String(selectedForecastTimeIndex) : "0";
   const selected = hasTimes ? forecastTimes[selectedForecastTimeIndex] : null;
-  forecastTimeReadout.textContent = selected ? (formatIsoLocal(selected) || selected) : "Forecast times unavailable";
+  const formatted = selected ? (formatIsoLocal(selected) || selected) : "";
+  const isCurrent = hasTimes && selectedForecastTimeIndex === currentForecastTimeIndex;
+  forecastTimeReadout.textContent = selected
+    ? (isCurrent ? `Current · ${formatted}` : formatted)
+    : "Forecast times unavailable";
+  if (forecastCurrentTime) {
+    forecastCurrentTime.disabled = !hasTimes;
+    forecastCurrentTime.classList.toggle("active", isCurrent);
+    forecastCurrentTime.setAttribute("aria-pressed", isCurrent ? "true" : "false");
+  }
   if (forecastPrevTime) forecastPrevTime.disabled = !hasTimes || selectedForecastTimeIndex <= 0;
   if (forecastNextTime) forecastNextTime.disabled = !hasTimes || selectedForecastTimeIndex >= forecastTimes.length - 1;
 }
@@ -1063,7 +1118,8 @@ async function loadForecastTimes(layerKey) {
   const payload = await response.json();
   if (payload?.error) throw new Error(String(payload.error));
   forecastTimes = Array.isArray(payload?.times) ? payload.times : [];
-  selectedForecastTimeIndex = 0;
+  currentForecastTimeIndex = findCurrentForecastTimeIndex(forecastTimes);
+  selectedForecastTimeIndex = currentForecastTimeIndex;
   updateForecastTimeControls();
 }
 
@@ -1081,7 +1137,34 @@ async function setForecastLayer(layerKey) {
   }
 }
 
-function updateForecastMapLocation(latValue, lonValue, label) {
+function renderDemoSiteMarkers() {
+  if (!forecastMap || typeof window.L === "undefined") return;
+
+  DEMO_SITES.forEach((site) => {
+    const lat = Number(site?.lat);
+    const lon = Number(site?.lon);
+    const siteId = String(site?.site_id || "").trim();
+    if (!siteId || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    const marker = window.L.circleMarker([lat, lon], { ...DEMO_MARKER_STYLE }).addTo(forecastMap);
+    marker.on("click", () => {
+      void executeSearch(siteId);
+    });
+    demoSiteMarkers.set(siteId, marker);
+  });
+}
+
+function clearSelectedDemoMarker() {
+  if (!selectedDemoSiteId) return;
+  const previous = demoSiteMarkers.get(selectedDemoSiteId);
+  if (previous) {
+    previous.setStyle({ ...DEMO_MARKER_STYLE });
+    previous.unbindTooltip();
+  }
+  selectedDemoSiteId = null;
+}
+
+function updateForecastMapLocation(latValue, lonValue, label, siteIdValue = "") {
   if (!forecastMap || typeof window.L === "undefined") return;
 
   const lat = Number(latValue);
@@ -1092,24 +1175,42 @@ function updateForecastMapLocation(latValue, lonValue, label) {
     animate: true,
   });
 
-  if (selectedLocationMarker) {
-    selectedLocationMarker.setLatLng([lat, lon]);
-  } else {
-    selectedLocationMarker = window.L.circleMarker([lat, lon], {
-      radius: 8,
-      weight: 3,
-      color: "#72e9ff",
-      fillColor: "#665cf6",
-      fillOpacity: 0.9,
-    }).addTo(forecastMap);
-  }
+  clearSelectedDemoMarker();
 
   const safeLabel = String(label || "Selected location");
-  selectedLocationMarker.bindTooltip(safeLabel, {
-    direction: "top",
-    offset: [0, -8],
-    opacity: 0.95,
-  });
+  const siteId = String(siteIdValue || "").trim();
+  const demoMarker = siteId ? demoSiteMarkers.get(siteId) : null;
+
+  if (demoMarker) {
+    if (selectedLocationMarker) {
+      forecastMap.removeLayer(selectedLocationMarker);
+      selectedLocationMarker = null;
+    }
+    selectedDemoSiteId = siteId;
+    demoMarker.setStyle({ ...SELECTED_MARKER_STYLE });
+    demoMarker.bringToFront();
+    demoMarker.bindTooltip(safeLabel, {
+      permanent: true,
+      direction: "right",
+      offset: [12, 0],
+      opacity: 1,
+      className: "site-label-tooltip",
+    }).openTooltip();
+  } else {
+    if (selectedLocationMarker) {
+      selectedLocationMarker.setLatLng([lat, lon]);
+      selectedLocationMarker.setStyle({ ...SELECTED_MARKER_STYLE });
+    } else {
+      selectedLocationMarker = window.L.circleMarker([lat, lon], { ...SELECTED_MARKER_STYLE }).addTo(forecastMap);
+    }
+    selectedLocationMarker.bindTooltip(safeLabel, {
+      permanent: true,
+      direction: "right",
+      offset: [12, 0],
+      opacity: 1,
+      className: "site-label-tooltip",
+    }).openTooltip();
+  }
 
   if (mapStatus) mapStatus.textContent = `Selected: ${safeLabel}`;
 }
@@ -1202,7 +1303,7 @@ function render(query, data) {
     .filter(Boolean);
   c_loc.textContent = data?.resolved?.name ? `${data.resolved.name}` : siteId;
   c_loc_meta.textContent = `Site ID: ${siteId} • ${lat}, ${lon}`;
-  updateForecastMapLocation(lat, lon, data?.resolved?.name || siteId);
+  updateForecastMapLocation(lat, lon, data?.resolved?.name || siteId, siteId);
 
   if (mapIntelTitle) {
     mapIntelTitle.textContent = data?.resolved?.name || siteId;
