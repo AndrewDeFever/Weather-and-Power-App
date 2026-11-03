@@ -1261,12 +1261,21 @@ function setActiveSuggestion(index) {
   });
 }
 
+function publicSiteLabel(entry) {
+  const name = String(entry?.name || "").trim().replace(/\s+Demo Site$/i, "");
+  const city = String(entry?.city || "").trim();
+  const state = String(entry?.state || "").trim();
+  if (name) return name;
+  return [city, state].filter(Boolean).join(", ") || "Demo location";
+}
+
 function applySuggestion(entry) {
   const siteId = String(entry?.site_id || "").trim();
   if (!siteId) return;
-  q.value = siteId;
+  const label = publicSiteLabel(entry);
+  q.value = label;
   clearSuggestions();
-  void executeSearch(siteId);
+  void executeSearch(siteId, label);
 }
 
 function renderSuggestions(items) {
@@ -1292,14 +1301,16 @@ function renderSuggestions(items) {
 
     const title = document.createElement("span");
     title.className = "suggestion-primary";
-    const name = String(entry?.name || "").trim();
-    title.textContent = name && name.toUpperCase() !== siteId.toUpperCase()
-      ? `${siteId} - ${name}`
-      : siteId;
+    title.textContent = publicSiteLabel(entry);
 
     const meta = document.createElement("span");
     meta.className = "suggestion-meta";
-    meta.textContent = formatSuggestionMeta(entry) || "No additional details";
+    const city = String(entry?.city || "").trim();
+    const state = String(entry?.state || "").trim();
+    const utility = String(entry?.utility || "").trim();
+    meta.textContent = [[city, state].filter(Boolean).join(", "), utility]
+      .filter(Boolean)
+      .join(" · ") || formatSuggestionMeta(entry) || "Demo location";
 
     button.appendChild(title);
     button.appendChild(meta);
@@ -1339,8 +1350,9 @@ async function fetchSuggestions(rawInput) {
     .map((site) => {
       const haystack = [site.site_id, site.name, site.city, site.state, site.utility].join(" ").toUpperCase();
       let score = haystack.includes(needle) ? 1 : 0;
-      if (site.site_id.startsWith(needle)) score += 3;
-      if (String(site.name || "").toUpperCase().startsWith(needle)) score += 2;
+      if (String(site.city || "").toUpperCase().startsWith(needle)) score += 5;
+      if (String(site.name || "").toUpperCase().startsWith(needle)) score += 4;
+      if (site.site_id.startsWith(needle)) score += 1;
       return { site, score };
     })
     .filter((item) => item.score > 0)
@@ -2106,8 +2118,8 @@ async function runSearch() {
   await executeSearch(check.normalized);
 }
 
-async function executeSearch(value) {
-  q.value = value;
+async function executeSearch(value, displayValue = value) {
+  q.value = displayValue;
 
   setStatus("loading", "Searching…");
   btn.disabled = true;
