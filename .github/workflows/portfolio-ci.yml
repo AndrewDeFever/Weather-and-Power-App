@@ -84,6 +84,11 @@ jobs:
           grep -q 'id="opsWeatherTrend"' frontend/index.html
           grep -q 'Temperature trend' frontend/index.html
           grep -q 'renderWeatherTrend' frontend/static/app.js
+          grep -q 'pickHourlyCheckpoints' frontend/static/app.js
+          grep -q 'smoothPath' frontend/static/app.js
+          grep -q 'hourly_periods' frontend/static/app.js
+          grep -q 'forecastHourly' app/api.py
+          grep -q 'Next 24 hours' frontend/static/app.js
           grep -q 'impact-brief-row' frontend/static/app.js
           grep -q 'Weather concerns expected' frontend/static/app.js
           grep -q 'No significant weather impacts expected' frontend/static/app.js
