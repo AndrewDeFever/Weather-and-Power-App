@@ -76,6 +76,18 @@ jobs:
           grep -q 'initForecastMap' frontend/static/app.js
           grep -q 'leaflet@1.9.4' frontend/index.html
           grep -q 'data-forecast-layer="weather"' frontend/index.html
+          grep -q 'id="forecastLegend"' frontend/index.html
+          grep -q 'forecast-legend' frontend/static/electric-theme.css
+          grep -q 'currentTemperatureSeasonCode' frontend/static/app.js
+          grep -q '/api/forecast/legend' frontend/static/app.js
+          grep -q '/api/forecast/legend-image' frontend/static/app.js
+          grep -q 'position: "bottomright"' frontend/static/app.js
+          grep -q 'NDFD_COLORTABLE' app/api.py
+          grep -q 'NDFD_VIEWER_LEGEND' app/api.py
+          if grep -q 'forecast-layer-title' frontend/index.html; then
+            echo "Redundant Forecast Layer caption must stay removed."
+            exit 1
+          fi
           grep -q 'class="ops-card-grid"' frontend/index.html
           grep -q 'id="opsForecastCardTitle"' frontend/index.html
           grep -q '>Next 24 Hours<' frontend/index.html
