@@ -1751,18 +1751,22 @@ function initForecastMap() {
   // Keep the operational map focused on the contiguous United States.
   // WMS imagery still uses the live viewport BBOX inside this navigation envelope.
   const conusBounds = window.L.latLngBounds(
-    [24.0, -125.0],
-    [50.0, -66.0]
+    [22.0, -128.0],
+    [51.5, -62.0]
   );
 
   forecastMap = window.L.map(forecastMapEl, {
     zoomControl: false,
     attributionControl: true,
-    minZoom: 4,
     maxZoom: 18,
     maxBounds: conusBounds,
     maxBoundsViscosity: 1.0,
-  }).setView([37.5, -96.5], 4);
+  });
+
+  // Fit the proven CONUS operating envelope, then make that fitted view the
+  // furthest-out zoom allowed for the current viewport size.
+  forecastMap.fitBounds(conusBounds, { padding: [12, 12] });
+  forecastMap.setMinZoom(forecastMap.getZoom());
 
   window.L.control.zoom({ position: "bottomright" }).addTo(forecastMap);
   forecastMap.attributionControl.setPosition("bottomleft");
