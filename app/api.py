@@ -407,6 +407,8 @@ def _resolve_site(query_text: str) -> Tuple[Optional[str], Optional[Dict[str, An
 
 NDFD_WMS = "https://digital.weather.gov/ndfd/wms"
 NDFD_XML = "https://digital.weather.gov/xml/sample_products/browser_interface/ndfdXMLclient.php"
+NDFD_COLORTABLE = "https://digital.weather.gov/scripts/get_colortable.php"
+NDFD_VIEWER_LEGEND = "https://digital.weather.gov/scripts/wxmap_legendImage.php"
 NDFD_HAZARD_CACHE_TTL_S = 1800
 _NDFD_HAZARD_CACHE: Dict[str, Dict[str, Any]] = {}
 _NDFD_HAZARD_CACHE_LOCK = Lock()
@@ -415,6 +417,30 @@ NDFD_CAPABILITIES_BUCKET_HOURS = 6
 NDFD_CAPABILITIES_TIMEOUT_S = 12.0
 _NDFD_TIMES_CACHE: Dict[str, Any] = {"loaded_at": 0.0, "layers": {}, "bucket": None}
 _NDFD_TIMES_CACHE_LOCK = Lock()
+NDFD_LEGEND_CACHE_TTL_S = 21600
+_NDFD_LEGEND_CACHE: Dict[str, Dict[str, Any]] = {}
+_NDFD_LEGEND_CACHE_LOCK = Lock()
+
+NDFD_WEATHER_LEGEND = {
+    "precipitation": [
+        {"label": "Rain chance", "color": "#C6FFAD"},
+        {"label": "Rain likely", "color": "#00CE00"},
+        {"label": "Snow chance", "color": "#8B96FF"},
+        {"label": "Snow likely", "color": "#0031FF"},
+        {"label": "Wintry Mix chance", "color": "#C5FFFE"},
+        {"label": "Wintry Mix likely", "color": "#00DEEF"},
+        {"label": "Ice chance", "color": "#E0C8FC"},
+        {"label": "Ice likely", "color": "#CE9CFF"},
+    ],
+    "secondary": [
+        {"label": "Severe", "color": "#FF0000"},
+        {"label": "Fog", "color": "#FFFF00"},
+        {"label": "Blowing", "color": "#E88112"},
+        {"label": "Smoke", "color": "#949494"},
+        {"label": "Haze", "color": "#CECECE"},
+        {"label": "Other", "color": "#FFEFE7"},
+    ],
+}
 
 METEOCON_CDN_BASE = "https://cdn.meteocons.com/1.0.0/svg-static/fill"
 METEOCON_ALLOWED_SLUGS = {
@@ -728,6 +754,64 @@ def _load_ndfd_times(layer_name: str, force: bool = False) -> List[str]:
     return times
 
 
+def _temperature_season_code_for_month(month: int) -> int:
+    if month in (12, 1, 2):
+        return -1
+    if month in (6, 7, 8, 9):
+        return 1
+    return 0
+
+
+def _temperature_season_name(season_code: int) -> str:
+    if season_code == -1:
+        return "winter"
+    if season_code == 1:
+        return "summer"
+    return "spring"
+
+
+def _load_ndfd_colortable(element: str, season_code: int = 0) -> List[Dict[str, Any]]:
+    season_name = _temperature_season_name(season_code)
+    cache_key = f"{element}:{season_name}"
+    now = time.time()
+    with _NDFD_LEGEND_CACHE_LOCK:
+        cached = _NDFD_LEGEND_CACHE.get(cache_key)
+        if cached and now - float(cached.get("ts", 0.0)) < NDFD_LEGEND_CACHE_TTL_S:
+            rows = cached.get("rows")
+            if isinstance(rows, list):
+                return rows
+
+    response = limited_requests_get(
+        NDFD_COLORTABLE,
+        params={"element": element, "region": "conus", "season": season_name},
+        headers={"User-Agent": "WeatherPowerStatus/1.0", "Accept": "application/json, text/plain, */*"},
+        timeout=max(HTTP_TIMEOUT_S, 8.0),
+    )
+    response.raise_for_status()
+    raw = json.loads(response.text)
+    rows: List[Dict[str, Any]] = []
+    if not isinstance(raw, list):
+        raise RuntimeError(f"Unexpected NDFD color-table response for {element}")
+    for row in raw:
+        if not isinstance(row, (list, tuple)) or len(row) < 4:
+            continue
+        value = to_float(row[0])
+        red = to_float(row[1])
+        green = to_float(row[2])
+        blue = to_float(row[3])
+        if value is None or red is None or green is None or blue is None:
+            continue
+        r = max(0, min(255, int(round(red))))
+        g = max(0, min(255, int(round(green))))
+        b = max(0, min(255, int(round(blue))))
+        rows.append({"value": value, "color": f"#{r:02X}{g:02X}{b:02X}"})
+    if not rows:
+        raise RuntimeError(f"Empty NDFD color table for {element}")
+    with _NDFD_LEGEND_CACHE_LOCK:
+        _NDFD_LEGEND_CACHE[cache_key] = {"ts": now, "rows": rows}
+    return rows
+
+
 def _parse_ndfd_hazard_series(root: ET.Element) -> List[Dict[str, Any]]:
     layouts: Dict[str, List[Dict[str, Optional[str]]]] = {}
     for layout in root.findall(".//time-layout"):
@@ -862,6 +946,152 @@ def forecast_times(
     return {"layer": layer_key, "upstream_layer": upstream_layer, "times": times, "error": None}
 
 
+@app.get("/api/forecast/legend")
+def forecast_legend(
+    layer: str = Query("weather", max_length=32),
+    season: Optional[int] = Query(None, ge=-1, le=1),
+) -> Dict[str, Any]:
+    layer_key = (layer or "").strip().lower()
+    if layer_key == "weather":
+        return {
+            "layer": layer_key,
+            "kind": "categorical",
+            "source": "NOAA NDFD viewer configuration",
+            "groups": NDFD_WEATHER_LEGEND,
+            "error": None,
+        }
+
+    if layer_key == "hazards":
+        return {
+            "layer": layer_key,
+            "kind": "dynamic-image",
+            "source": "NOAA NDFD viewer legend",
+            "error": None,
+        }
+
+    if layer_key == "temperature":
+        season_code = (
+            season
+            if season is not None
+            else _temperature_season_code_for_month(datetime.now().month)
+        )
+        element = "t"
+        native_unit = "°F"
+        display_unit = "°F"
+        display_factor = 1.0
+        season_label = (
+            "Winter"
+            if season_code == -1
+            else "Summer"
+            if season_code == 1
+            else "Spring/Fall"
+        )
+    elif layer_key == "pop12":
+        season_code = 1
+        element = "pop12"
+        native_unit = "%"
+        display_unit = "%"
+        display_factor = 1.0
+        season_label = None
+    elif layer_key == "wind":
+        season_code = 1
+        element = "windspd"
+        native_unit = "kt"
+        display_unit = "mph"
+        display_factor = 1.1507794
+        season_label = None
+    else:
+        return {"layer": layer_key, "kind": None, "stops": [], "error": "Unsupported forecast layer"}
+
+    try:
+        stops = _load_ndfd_colortable(element, season_code=season_code)
+    except Exception:
+        log.exception("NDFD legend table request failed layer=%s element=%s", layer_key, element)
+        return {
+            "layer": layer_key,
+            "kind": "scalar",
+            "stops": [],
+            "error": "Forecast legend unavailable",
+        }
+
+    values = [float(item["value"]) for item in stops]
+    return {
+        "layer": layer_key,
+        "kind": "scalar",
+        "source": "NOAA NDFD color table",
+        "element": element,
+        "native_unit": native_unit,
+        "display_unit": display_unit,
+        "display_factor": display_factor,
+        "season": season_code if layer_key == "temperature" else None,
+        "season_label": season_label,
+        "min": min(values),
+        "max": max(values),
+        "stops": stops,
+        "error": None,
+    }
+
+
+@app.get("/api/forecast/legend-image")
+def forecast_legend_image(
+    bbox: str = Query(..., max_length=160),
+    vtit: str = Query(..., max_length=128),
+    width: int = Query(900, ge=240, le=1400),
+) -> Response:
+    bbox_parts = [part.strip() for part in bbox.split(",")]
+    if len(bbox_parts) != 4:
+        return JSONResponse(status_code=400, content={"error": "Invalid bbox"})
+    try:
+        bbox_values = [float(part) for part in bbox_parts]
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Invalid bbox"})
+    if not all(abs(value) <= 30000000 for value in bbox_values):
+        return JSONResponse(status_code=400, content={"error": "Invalid bbox"})
+
+    vtit_text = (vtit or "").strip()
+    if not re.fullmatch(r"[0-9A-Za-z:+.\-TZ_]+", vtit_text):
+        return JSONResponse(status_code=400, content={"error": "Invalid forecast time"})
+    valid_time = vtit_text.split("_", 1)[0]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z?", valid_time):
+        return JSONResponse(status_code=400, content={"error": "Invalid forecast time"})
+    viewer_vt = valid_time[:16]
+
+    params = {
+        "dataset": "ndfd",
+        "element": "wwa",
+        "region": "conus",
+        "vt": viewer_vt,
+        "opacity": "0.8",
+        "left": str(bbox_values[0]),
+        "bottom": str(bbox_values[1]),
+        "right": str(bbox_values[2]),
+        "top": str(bbox_values[3]),
+        "width": str(width),
+        "ms": "english",
+    }
+    try:
+        upstream = limited_requests_get(
+            NDFD_VIEWER_LEGEND,
+            params=params,
+            headers={"User-Agent": "WeatherPowerStatus/1.0", "Accept": "image/png"},
+            timeout=max(HTTP_TIMEOUT_S, 8.0),
+        )
+        upstream.raise_for_status()
+    except Exception:
+        log.exception("NDFD dynamic hazard legend request failed vtit=%s", vtit_text)
+        return JSONResponse(status_code=502, content={"error": "Forecast hazard legend unavailable"})
+
+    content_type = (upstream.headers.get("content-type") or "").lower()
+    if "image/" not in content_type:
+        return JSONResponse(status_code=502, content={"error": "Forecast hazard legend unavailable"})
+
+    return Response(
+        content=upstream.content,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=60"},
+    )
+
+
 @app.get("/api/weather/icon")
 def weather_icon(slug: str = Query("not-available", max_length=64)) -> Response:
     icon_slug = (slug or "").strip().lower()
@@ -888,6 +1118,7 @@ def forecast_wms(
     layer: str = Query("weather", max_length=32),
     bbox: str = Query(..., max_length=160),
     vtit: Optional[str] = Query(None, max_length=128),
+    season: Optional[int] = Query(None, ge=-1, le=1),
     width: int = Query(512, ge=64, le=1024),
     height: int = Query(512, ge=64, le=1024),
 ) -> Response:
@@ -927,6 +1158,13 @@ def forecast_wms(
         if not re.fullmatch(r"[0-9A-Za-z:+.\-TZ_]+", vtit_text):
             return JSONResponse(status_code=400, content={"error": "Invalid forecast time"})
         params["VTIT"] = vtit_text
+    if layer_key == "temperature":
+        season_code = (
+            season
+            if season is not None
+            else _temperature_season_code_for_month(datetime.now().month)
+        )
+        params["SEASON"] = str(season_code)
     try:
         upstream = limited_requests_get(
             NDFD_WMS,
