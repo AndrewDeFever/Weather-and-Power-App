@@ -464,6 +464,10 @@ function renderHazardCard() {
     opsHazardTitle.textContent = "No NDFD hazard forecast";
     opsHazardStatus.className = "ops-status severity-none";
     opsHazardStatus.textContent = `No long-duration NDFD hazard at ${formatIsoLocal(selectedTime) || selectedTime}`;
+    const empty = document.createElement("div");
+    empty.className = "ops-empty-state";
+    empty.innerHTML = "<strong>Forecast hazard guidance: None at this point</strong><span>NDFD shows no long-duration watch, warning, or advisory for the selected forecast time. Short-duration warnings can still appear in the NWS active-now signal below.</span>";
+    opsHazardList.appendChild(empty);
   }
 
   const nwsRow = document.createElement("div");
