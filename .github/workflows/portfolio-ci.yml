@@ -103,6 +103,7 @@ jobs:
           grep -q 'formatEtrForDisplay' frontend/static/app.js
           grep -q 'Next period:' frontend/static/app.js
           grep -q 'id="opsPowerSiteMeta"' frontend/index.html
+          grep -q 'class="power-card-footer"' frontend/index.html
           grep -q 'id="opsOpenGoogleMaps"' frontend/index.html
           grep -q 'id="opsOpenOutageMap"' frontend/index.html
           grep -q 'Open Site in Google Maps' frontend/index.html
