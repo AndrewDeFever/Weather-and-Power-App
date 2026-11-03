@@ -1,6 +1,8 @@
 name: "Temporary Live Security Header Probe"
 
 on:
+  pull_request:
+    branches: ["main"]
   push:
     branches: ["audit/static-security-headers"]
 
