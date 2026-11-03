@@ -513,7 +513,7 @@ main .container{
 .map-status{
   position:absolute;
   left:14px;
-  bottom:14px;
+  bottom:76px;
   z-index:500;
   padding:7px 10px;
   border:1px solid rgba(114,233,255,.2);
@@ -551,37 +551,42 @@ main .container{
 /* Forecast layer controls */
 .forecast-layer-rail{
   position:absolute;
-  left:14px;
+  left:58px;
+  right:14px;
   top:14px;
   z-index:520;
-  width:170px;
+  width:auto;
   display:flex;
-  flex-direction:column;
-  gap:6px;
-  padding:10px;
+  flex-direction:row;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:7px;
+  padding:8px 10px;
   border:1px solid rgba(114,233,255,.22);
-  border-radius:14px;
+  border-radius:999px;
   background:rgba(5,19,41,.88);
   backdrop-filter:blur(10px);
   box-shadow:0 10px 30px rgba(0,0,0,.24);
 }
 .forecast-layer-title{
-  margin-bottom:2px;
+  margin:0 3px 0 1px;
   color:#dff8ff;
-  font-size:.72rem;
+  font-size:.68rem;
   font-weight:900;
+  white-space:nowrap;
 }
 .forecast-layer-btn{
-  width:100%;
+  width:auto;
   border:1px solid rgba(109,153,202,.28);
-  border-radius:10px;
-  padding:8px 10px;
+  border-radius:999px;
+  padding:7px 11px;
   background:rgba(16,39,72,.86);
   color:#d4e4f5;
   font:inherit;
-  font-size:.74rem;
+  font-size:.72rem;
   font-weight:800;
-  text-align:left;
+  text-align:center;
+  white-space:nowrap;
   cursor:pointer;
 }
 .forecast-layer-btn:hover{
@@ -596,9 +601,10 @@ main .container{
 }
 @media (max-width:760px){
   .forecast-layer-rail{
-    left:10px;
+    left:52px;
+    right:10px;
     top:10px;
-    width:150px;
+    border-radius:16px;
   }
 }
 
@@ -851,13 +857,22 @@ main .container{
 
 /* Corporate-proven forecast valid-time control */
 .forecast-timebar{
+  position:absolute;
+  left:50%;
+  bottom:14px;
+  z-index:520;
+  width:min(1120px,calc(100% - 28px));
   display:grid;
-  grid-template-columns:auto minmax(165px,220px) 1fr auto;
+  grid-template-columns:auto auto minmax(165px,220px) 1fr auto;
   align-items:center;
-  gap:12px;
-  padding:10px 14px;
-  border-top:1px solid rgba(72,170,235,.18);
-  background:linear-gradient(180deg,rgba(9,29,56,.96),rgba(6,21,43,.98));
+  gap:10px;
+  padding:8px 12px;
+  transform:translateX(-50%);
+  border:1px solid rgba(114,233,255,.22);
+  border-radius:999px;
+  background:rgba(5,19,41,.90);
+  backdrop-filter:blur(12px);
+  box-shadow:0 10px 30px rgba(0,0,0,.28);
 }
 .forecast-time-copy{
   display:flex;
@@ -879,6 +894,28 @@ main .container{
   width:100%;
   accent-color:#42d7ff;
 }
+.forecast-current-btn{
+  min-width:72px;
+  height:34px;
+  padding:0 13px;
+  border:1px solid rgba(96,185,255,.28);
+  border-radius:999px;
+  background:rgba(13,42,75,.88);
+  color:#dff7ff;
+  font:inherit;
+  font-size:.72rem;
+  font-weight:900;
+  cursor:pointer;
+}
+.forecast-current-btn.active{
+  color:#041528;
+  border-color:#7eeeff;
+  background:linear-gradient(135deg,#8cecff,#37bfff);
+}
+.forecast-current-btn:disabled{
+  opacity:.35;
+  cursor:not-allowed;
+}
 .time-step-btn{
   width:34px;
   height:34px;
@@ -895,8 +932,25 @@ main .container{
 }
 @media (max-width:700px){
   .forecast-timebar{
-    grid-template-columns:auto 1fr auto;
+    grid-template-columns:auto auto 1fr auto;
+    border-radius:16px;
   }
-  .forecast-time-copy{grid-column:2;}
+  .forecast-time-copy{grid-column:3;}
   .forecast-time-slider{grid-column:1 / -1;grid-row:2;}
+}
+
+
+.site-label-tooltip{
+  padding:7px 10px!important;
+  border:1px solid rgba(114,233,255,.32)!important;
+  border-radius:999px!important;
+  background:rgba(5,19,41,.94)!important;
+  color:#effbff!important;
+  box-shadow:0 8px 24px rgba(0,0,0,.28)!important;
+  font-size:.72rem!important;
+  font-weight:900!important;
+  white-space:nowrap!important;
+}
+.site-label-tooltip.leaflet-tooltip-right::before{
+  border-right-color:rgba(5,19,41,.94)!important;
 }
