@@ -345,15 +345,33 @@ def _normalize_site_lookup(value: str) -> str:
 def _rebuild_site_index() -> None:
     global SITE_LOOKUP
     index: Dict[str, str] = {}
+    ambiguous: set[str] = set()
+
+    def add_candidate(candidate: str, site_id: str) -> None:
+        normalized = _normalize_site_lookup(candidate)
+        if not normalized or normalized in ambiguous:
+            return
+        existing = index.get(normalized)
+        if existing and existing != site_id:
+            index.pop(normalized, None)
+            ambiguous.add(normalized)
+            return
+        index[normalized] = site_id
+
     for site_id, site in SITES.items():
-        candidates = [site_id, str(site.get("name") or "")]
+        city = str(site.get("city") or "")
+        state = str(site.get("state") or "")
+        candidates = [
+            site_id,
+            str(site.get("name") or ""),
+            city,
+            f"{city} {state}".strip(),
+        ]
         aliases = site.get("aliases")
         if isinstance(aliases, list):
             candidates.extend(str(alias) for alias in aliases)
         for candidate in candidates:
-            normalized = _normalize_site_lookup(candidate)
-            if normalized and normalized not in index:
-                index[normalized] = site_id
+            add_candidate(candidate, site_id)
     SITE_LOOKUP = index
 
 
