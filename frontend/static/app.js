@@ -213,6 +213,7 @@ const forecastTimeNotches = $("forecastTimeNotches");
 const forecastCurrentTime = $("forecastCurrentTime");
 const forecastPrevTime = $("forecastPrevTime");
 const forecastNextTime = $("forecastNextTime");
+const opsForecastCardTitle = $("opsForecastCardTitle");
 const opsForecastTitle = $("opsForecastTitle");
 const opsCurrentWeatherIcon = $("opsCurrentWeatherIcon");
 const opsForecastSummary = $("opsForecastSummary");
@@ -583,6 +584,24 @@ function isCurrentForecastSelection() {
   return forecastTimes.length > 0 && selectedForecastTimeIndex === currentForecastTimeIndex;
 }
 
+function selectedHourlyWeatherPeriod() {
+  const periods = Array.isArray(lastPayload?.weather?.hourly_periods)
+    ? lastPayload.weather.hourly_periods
+    : [];
+  const selected = forecastTimes[selectedForecastTimeIndex] || null;
+  const selectedMs = Date.parse(selected || "");
+  if (!Number.isFinite(selectedMs)) return null;
+
+  for (const period of periods) {
+    const startMs = Date.parse(period?.start_time || "");
+    const endMs = Date.parse(period?.end_time || "");
+    if (!Number.isFinite(startMs)) continue;
+    if (Number.isFinite(endMs) && selectedMs >= startMs && selectedMs < endMs) return period;
+    if (!Number.isFinite(endMs) && startMs === selectedMs) return period;
+  }
+  return null;
+}
+
 function selectedWeatherPeriod() {
   const periods = Array.isArray(lastPayload?.weather?.forecast_periods)
     ? lastPayload.weather.forecast_periods
@@ -719,7 +738,7 @@ function smoothPath(points) {
   return d;
 }
 
-function renderWeatherTrend(periods, selectedTime) {
+function renderWeatherTrend(periods) {
   if (!opsWeatherTrend) return;
   opsWeatherTrend.innerHTML = "";
   const rows = pickHourlyCheckpoints(periods);
@@ -740,7 +759,6 @@ function renderWeatherTrend(periods, selectedTime) {
   const spread = Math.max(8, maxTemp - minTemp);
   const low = minTemp - Math.max(2, spread * 0.16);
   const high = maxTemp + Math.max(2, spread * 0.16);
-  const selectedMs = Date.parse(selectedTime || "");
 
   const xFor = (index) => padX + (index * (width - padX * 2)) / Math.max(1, rows.length - 1);
   const yFor = (temp) => padTop + ((high - temp) / (high - low)) * (height - padTop - padBottom);
@@ -769,17 +787,11 @@ function renderWeatherTrend(periods, selectedTime) {
 
   rows.forEach((period, index) => {
     const [x, y] = points[index];
-    const startMs = Date.parse(period?.start_time || "");
-    const endMs = Date.parse(period?.end_time || "");
-    const isSelected = Number.isFinite(selectedMs) &&
-      selectedMs >= startMs &&
-      (!Number.isFinite(endMs) || selectedMs < endMs);
-
     const marker = document.createElementNS(svg.namespaceURI, "circle");
     marker.setAttribute("cx", String(x));
     marker.setAttribute("cy", String(y));
-    marker.setAttribute("r", isSelected ? "5.5" : "4");
-    marker.setAttribute("class", isSelected ? "weather-trend-dot selected" : "weather-trend-dot");
+    marker.setAttribute("r", "4");
+    marker.setAttribute("class", "weather-trend-dot");
     svg.appendChild(marker);
 
     const tempText = document.createElementNS(svg.namespaceURI, "text");
@@ -833,18 +845,62 @@ function formatEtrForDisplay(rawValue, outageNearby) {
   return raw;
 }
 
+function renderNext24Weather() {
+  const wx = lastPayload?.weather || {};
+  const hourlyPeriods = Array.isArray(wx?.hourly_periods) ? wx.hourly_periods : [];
+  const checkpoints = renderWeatherTrend(hourlyPeriods) || [];
+
+  if (!opsForecastStrip) return;
+  opsForecastStrip.innerHTML = "";
+
+  checkpoints.forEach((entry) => {
+    const item = document.createElement("div");
+    item.className = "forecast-period hourly-forecast-period";
+
+    const parts = formatCheckpointLabel(entry?.start_time);
+    const label = document.createElement("span");
+    label.className = "forecast-period-label";
+    label.textContent = [parts.date, parts.time].filter(Boolean).join(" · ");
+
+    const icon = document.createElement("img");
+    icon.className = "meteocon-small";
+    icon.src = meteoconUrl(entry?.short_forecast, entry?.is_daytime);
+    icon.alt = "";
+    icon.setAttribute("aria-hidden", "true");
+
+    const condition = document.createElement("span");
+    condition.className = "forecast-period-condition";
+    condition.textContent = conciseCondition(entry?.short_forecast || "Forecast");
+
+    const precip = Number(entry?.precip_probability);
+    const meta = document.createElement("span");
+    meta.className = "forecast-period-meta";
+    meta.textContent = Number.isFinite(precip) && precip > 0 ? `${Math.round(precip)}% rain` : "";
+
+    item.append(label, icon, condition);
+    if (meta.textContent) item.appendChild(meta);
+    opsForecastStrip.appendChild(item);
+  });
+}
+
 function renderSelectedTimeWeather() {
   if (!lastPayload) return;
   const wx = lastPayload?.weather || {};
   const current = isCurrentForecastSelection();
-  const period = selectedWeatherPeriod();
+  const broadPeriod = selectedWeatherPeriod();
+  const hourlyPeriod = current ? null : selectedHourlyWeatherPeriod();
+  const period = hourlyPeriod || broadPeriod;
 
-  let condition = wx?.condition || period?.short_forecast || "Weather unavailable";
+  let condition = wx?.condition || broadPeriod?.short_forecast || "Weather unavailable";
   let temperature = wx?.temperature_f;
-  let summary = wx?.detailedForecast || period?.detailed_forecast || "Forecast details unavailable.";
+  let summary = wx?.detailedForecast || broadPeriod?.detailed_forecast || "Forecast details unavailable.";
   let iconCondition = condition;
   let isDaytime = true;
   const metrics = [];
+
+  if (opsForecastCardTitle) {
+    opsForecastCardTitle.textContent = current ? "Current Weather" : "Forecast at Selected Time";
+  }
 
   if (current) {
     if (opsWeatherMode) {
@@ -865,17 +921,18 @@ function renderSelectedTimeWeather() {
         : null;
     if (Number.isFinite(feelsLike)) {
       metrics.push(["Feels like", `${Math.round(feelsLike)}°F`]);
-    } else if (period && Number.isFinite(Number(period?.precip_probability))) {
-      metrics.push(["Next precip", `${Math.round(Number(period.precip_probability))}%`]);
+    } else if (broadPeriod && Number.isFinite(Number(broadPeriod?.precip_probability))) {
+      metrics.push(["Next precip", `${Math.round(Number(broadPeriod.precip_probability))}%`]);
     }
+    summary = broadPeriod?.detailed_forecast ? `Next period: ${broadPeriod.detailed_forecast}` : summary;
   } else if (period) {
-    condition = period?.short_forecast || condition;
+    condition = period?.short_forecast || broadPeriod?.short_forecast || condition;
     temperature = period?.temperature;
-    summary = period?.detailed_forecast || summary;
+    summary = broadPeriod?.detailed_forecast || period?.detailed_forecast || "Forecast details unavailable.";
     iconCondition = condition;
     isDaytime = period?.is_daytime !== false;
     if (opsWeatherMode) {
-      opsWeatherMode.textContent = "FORECAST";
+      opsWeatherMode.textContent = hourlyPeriod ? "HOURLY FORECAST" : "FORECAST";
       opsWeatherMode.className = "time-domain-badge forecast";
     }
     metrics.push(["Valid", formatIsoLocal(forecastTimes[selectedForecastTimeIndex]) || "—"]);
@@ -890,11 +947,7 @@ function renderSelectedTimeWeather() {
       ? `${temperature}°F • ${displayCondition}`
       : displayCondition;
   }
-  if (opsForecastSummary) {
-    opsForecastSummary.textContent = current && period?.detailed_forecast
-      ? `Next period: ${period.detailed_forecast}`
-      : summary;
-  }
+  if (opsForecastSummary) opsForecastSummary.textContent = summary;
   if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = meteoconUrl(iconCondition, isDaytime);
 
   if (opsWeatherMetrics) {
@@ -911,41 +964,7 @@ function renderSelectedTimeWeather() {
     });
   }
 
-  const hourlyPeriods = Array.isArray(wx?.hourly_periods) ? wx.hourly_periods : [];
-  const selectedTime = forecastTimes[selectedForecastTimeIndex] || null;
-  const checkpoints = renderWeatherTrend(hourlyPeriods, selectedTime) || [];
-
-  if (opsForecastStrip) {
-    opsForecastStrip.innerHTML = "";
-    checkpoints.forEach((entry) => {
-      const item = document.createElement("div");
-      item.className = "forecast-period hourly-forecast-period";
-
-      const parts = formatCheckpointLabel(entry?.start_time);
-      const label = document.createElement("span");
-      label.className = "forecast-period-label";
-      label.textContent = [parts.date, parts.time].filter(Boolean).join(" · ");
-
-      const icon = document.createElement("img");
-      icon.className = "meteocon-small";
-      icon.src = meteoconUrl(entry?.short_forecast, entry?.is_daytime);
-      icon.alt = "";
-      icon.setAttribute("aria-hidden", "true");
-
-      const condition = document.createElement("span");
-      condition.className = "forecast-period-condition";
-      condition.textContent = conciseCondition(entry?.short_forecast || "Forecast");
-
-      const precip = Number(entry?.precip_probability);
-      const meta = document.createElement("span");
-      meta.className = "forecast-period-meta";
-      meta.textContent = Number.isFinite(precip) && precip > 0 ? `${Math.round(precip)}% rain` : "";
-
-      item.append(label, icon, condition);
-      if (meta.textContent) item.appendChild(meta);
-      opsForecastStrip.appendChild(item);
-    });
-  }
+  renderNext24Weather();
 }
 
 function renderOpsCards(data) {
