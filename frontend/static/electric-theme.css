@@ -1109,3 +1109,32 @@ html,body{color-scheme:dark;}
     border-radius:0;
   }
 }
+
+
+/* Map-first cleanup: remove scaffolding chrome */
+.map-workspace{
+  overflow:hidden;
+}
+.map-workspace-body{
+  border-radius:18px;
+}
+.map-workspace-head{
+  display:none!important;
+}
+
+/* Calm alert state is informational, not "green means nothing is happening" */
+.hazards-card.severity-none{
+  border-color:rgba(83,190,231,.24);
+}
+.ops-status.severity-none{
+  color:#c9efff;
+  border-color:rgba(83,190,231,.26);
+  background:rgba(38,128,168,.10);
+}
+.ops-empty-state{
+  border-color:rgba(83,190,231,.18);
+  background:linear-gradient(135deg,rgba(32,112,153,.10),rgba(8,31,54,.22));
+}
+.ops-empty-state strong{
+  color:#c9efff;
+}

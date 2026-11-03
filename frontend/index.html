@@ -6,7 +6,7 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102i">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102j">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
@@ -92,13 +92,6 @@
         </section>
 
         <section class="map-workspace" aria-label="Forecast and GIS workspace">
-          <div class="map-workspace-head">
-            <div>
-              <div class="eyebrow">North Star Workspace</div>
-              <h2>Forecast &amp; GIS Map</h2>
-            </div>
-            <div class="map-workspace-state">Forecast Beta</div>
-          </div>
           <div class="map-workspace-body">
             <div class="map-stage" aria-label="Forecast and GIS map workspace">
               <div class="forecast-layer-rail" aria-label="Forecast layers">
@@ -107,7 +100,7 @@
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="temperature">Temperature</button>
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="pop12">Precipitation %</button>
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="wind">Wind Speed</button>
-                <button class="forecast-layer-btn" type="button" data-forecast-layer="hazards">Hazards</button>
+                <button class="forecast-layer-btn" type="button" data-forecast-layer="hazards">Forecast Hazards</button>
               </div>
               <div id="forecastMap" class="forecast-map" role="application" aria-label="Interactive weather and GIS map"></div>
               <div id="mapStatus" class="map-status">Loading NDFD weather…</div>
@@ -156,7 +149,7 @@
                 </svg>
               </div>
               <div>
-                <span class="ops-card-kicker">Hazards &amp; Advisories</span>
+                <span class="ops-card-kicker">Active NWS Alerts</span>
                 <h3 id="opsHazardTitle">No location selected</h3>
               </div>
             </div>
@@ -216,6 +209,6 @@
   </footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js?v=20261102i"></script>
+  <script src="/static/app.js?v=20261102j"></script>
 </body>
 </html>
