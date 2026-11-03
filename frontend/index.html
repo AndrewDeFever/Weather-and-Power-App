@@ -6,7 +6,7 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261103b">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261103c">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
@@ -175,10 +175,12 @@
             </div>
             <div id="opsPowerStatus" class="ops-status good">Search a site to load power conditions.</div>
             <div id="opsPowerMeta" class="ops-metrics power-primary-metrics"></div>
-            <div id="opsPowerSiteMeta" class="power-site-meta"></div>
-            <div class="power-verify-actions" aria-label="Verify outage">
-              <button id="opsOpenGoogleMaps" class="power-action-btn" type="button" disabled>Open Site in Google Maps</button>
-              <button id="opsOpenOutageMap" class="power-action-btn" type="button" disabled>Open Utility Outage Map</button>
+            <div class="power-card-footer">
+              <div id="opsPowerSiteMeta" class="power-site-meta"></div>
+              <div class="power-verify-actions" aria-label="Verify outage">
+                <button id="opsOpenGoogleMaps" class="power-action-btn" type="button" disabled>Open Site in Google Maps</button>
+                <button id="opsOpenOutageMap" class="power-action-btn" type="button" disabled>Open Utility Outage Map</button>
+              </div>
             </div>
           </article>
         </section>
