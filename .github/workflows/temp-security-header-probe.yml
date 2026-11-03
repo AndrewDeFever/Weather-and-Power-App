@@ -1,0 +1,21 @@
+name: "Temporary Live Security Header Probe"
+
+on:
+  push:
+    branches: ["audit/static-security-headers"]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Probe public frontend security headers"
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sS -D - -o /dev/null https://wnp.subrealstudios.com/ \
+            | tr -d '\r' \
+            | grep -Ei '^(HTTP/|content-security-policy:|strict-transport-security:|x-content-type-options:|x-frame-options:|referrer-policy:|permissions-policy:|server:|via:|x-cache:)' \
+            || true
