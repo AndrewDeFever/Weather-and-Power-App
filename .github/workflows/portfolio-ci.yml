@@ -41,6 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           node --check frontend/static/app.js
+          node --check frontend/static/vendor/leaflet/leaflet-assets.js
           test -s frontend/index.html
           test -s frontend/static/styles.css
           test -s frontend/static/electric-theme.css
