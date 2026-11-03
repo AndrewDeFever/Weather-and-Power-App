@@ -46,6 +46,28 @@ jobs:
           test -s frontend/static/electric-theme.css
           test -s frontend/static/electric-storm-tile.png
           test -s frontend/static/subreal-weather-logo.png
+          test -s frontend/static/assets/weather-icons/README.md
+          test -s frontend/static/assets/weather-icons/weather/LICENSE
+          test -s frontend/static/assets/weather-icons/weather/clear-day.svg
+          test -s frontend/static/assets/weather-icons/weather/clear-night.svg
+          test -s frontend/static/assets/weather-icons/weather/cloudy.svg
+          test -s frontend/static/assets/weather-icons/weather/fog.svg
+          test -s frontend/static/assets/weather-icons/weather/overcast.svg
+          test -s frontend/static/assets/weather-icons/weather/partly-cloudy-day-rain.svg
+          test -s frontend/static/assets/weather-icons/weather/partly-cloudy-day.svg
+          test -s frontend/static/assets/weather-icons/weather/partly-cloudy-night.svg
+          test -s frontend/static/assets/weather-icons/weather/rain.svg
+          test -s frontend/static/assets/weather-icons/weather/snow.svg
+          test -s frontend/static/assets/weather-icons/weather/thunderstorms.svg
+          test -s frontend/static/assets/weather-icons/weather/wind.svg
+          test -s frontend/static/assets/weather-icons/ui/LICENSE
+          test -s frontend/static/assets/weather-icons/ui/clock.svg
+          test -s frontend/static/assets/weather-icons/ui/droplets.svg
+          test -s frontend/static/assets/weather-icons/ui/external-link.svg
+          test -s frontend/static/assets/weather-icons/ui/map-pin.svg
+          test -s frontend/static/assets/weather-icons/ui/thermometer.svg
+          test -s frontend/static/assets/weather-icons/ui/triangle-alert.svg
+          test -s frontend/static/assets/weather-icons/ui/wind.svg
           grep -q 'SubReal Studios' frontend/index.html
           grep -q 'const API_ENDPOINT = "/api/status"' frontend/static/app.js
           grep -q 'DEMO_TUL_01' frontend/static/app.js
