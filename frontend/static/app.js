@@ -219,6 +219,8 @@ const opsForecastSummary = $("opsForecastSummary");
 const opsWeatherMode = $("opsWeatherMode");
 const opsWeatherMetrics = $("opsWeatherMetrics");
 const opsForecastStrip = $("opsForecastStrip");
+const opsWeatherTrend = $("opsWeatherTrend");
+const opsWeatherTrendRange = $("opsWeatherTrendRange");
 const opsHazardTitle = $("opsHazardTitle");
 const opsHazardStatus = $("opsHazardStatus");
 const opsHazardList = $("opsHazardList");
@@ -422,85 +424,110 @@ function selectedForecastHazardPeriod() {
 
 function renderHazardCard() {
   if (!opsHazardTitle || !opsHazardStatus || !opsHazardList) return;
+
   const currentAlerts = Array.isArray(lastPayload?.weather?.alerts) ? lastPayload.weather.alerts : [];
   const selectedTime = forecastTimes[selectedForecastTimeIndex] || null;
   const period = selectedForecastHazardPeriod();
   const forecastHazards = Array.isArray(period?.hazards) ? period.hazards : [];
   const forecastClass = ndfdHazardClass(forecastHazards);
+  const activeSeverity = String(lastPayload?.weather?.max_alert_severity || "").toLowerCase();
+  const hasActiveAlert = currentAlerts.length > 0;
   const hazardsCard = opsHazardStatus.closest(".ops-card");
 
   if (hazardsCard) {
     hazardsCard.classList.remove("severity-none", "severity-minor", "severity-moderate", "severity-severe", "severity-extreme");
-    hazardsCard.classList.add(`severity-${forecastClass}`);
+    hazardsCard.classList.add(hasActiveAlert ? `severity-${["minor","moderate","severe","extreme"].includes(activeSeverity) ? activeSeverity : "moderate"}` : `severity-${forecastClass}`);
   }
 
   opsHazardList.innerHTML = "";
 
-  if (ndfdHazardError) {
-    opsHazardTitle.textContent = "Forecast hazard data unavailable";
-    opsHazardStatus.className = "ops-status state-unknown";
-    opsHazardStatus.textContent = ndfdHazardError;
-  } else if (!ndfdHazardLocationKey) {
-    opsHazardTitle.textContent = "No location selected";
-    opsHazardStatus.className = "ops-status severity-none";
-    opsHazardStatus.textContent = "Select a site to load NDFD forecast hazards.";
-  } else if (!selectedTime) {
-    opsHazardTitle.textContent = "Forecast time unavailable";
-    opsHazardStatus.className = "ops-status state-unknown";
-    opsHazardStatus.textContent = "NDFD hazard timing is not available for this layer.";
-  } else if (forecastHazards.length) {
-    opsHazardTitle.textContent = forecastHazards.length === 1
-      ? `${forecastHazards[0]?.phenomena || "Forecast hazard"} ${forecastHazards[0]?.significance || ""}`.trim()
-      : `${forecastHazards.length} forecast hazards`;
-    opsHazardStatus.className = `ops-status severity-${forecastClass}`;
-    opsHazardStatus.textContent = `NDFD valid ${formatIsoLocal(selectedTime) || selectedTime}`;
+  // 1) Active alert: always gets top priority.
+  const alertBlock = document.createElement("div");
+  alertBlock.className = hasActiveAlert ? "active-alert-block active" : "active-alert-block";
+  const alertKicker = document.createElement("span");
+  alertKicker.className = "impact-section-kicker";
+  alertKicker.textContent = "Active Alert";
+  const alertTitle = document.createElement("strong");
+  const alertMeta = document.createElement("span");
 
-    forecastHazards.slice(0, 4).forEach((hazard) => {
+  if (hasActiveAlert) {
+    const primary = currentAlerts[0] || {};
+    alertTitle.textContent = primary?.event || "Alert in effect";
+    const expires = primary?.expires ? formatIsoLocal(primary.expires) : null;
+    alertMeta.textContent = expires ? `In effect until ${expires}` : "Currently in effect";
+  } else {
+    alertTitle.textContent = "No active alerts";
+    alertMeta.textContent = "No current alert is in effect at this location.";
+  }
+  alertBlock.append(alertKicker, alertTitle, alertMeta);
+  opsHazardList.appendChild(alertBlock);
+
+  // 2) Forecast outlook for selected time.
+  const outlook = document.createElement("div");
+  outlook.className = "forecast-outlook-block";
+  const outlookKicker = document.createElement("span");
+  outlookKicker.className = "impact-section-kicker";
+  outlookKicker.textContent = "Forecast Outlook";
+  const outlookTitle = document.createElement("strong");
+  const outlookMeta = document.createElement("span");
+
+  if (ndfdHazardError) {
+    outlookTitle.textContent = "Forecast hazard data unavailable";
+    outlookMeta.textContent = "Forecast hazard guidance could not be loaded.";
+  } else if (!ndfdHazardLocationKey || !selectedTime) {
+    outlookTitle.textContent = "Select a location and forecast time";
+    outlookMeta.textContent = "Forecast impacts will appear here.";
+  } else if (forecastHazards.length) {
+    outlookTitle.textContent = forecastHazards.length === 1
+      ? [forecastHazards[0]?.phenomena, forecastHazards[0]?.significance].filter(Boolean).join(" ") || "Forecast hazard"
+      : `${forecastHazards.length} forecast hazards`;
+    outlookMeta.textContent = `Forecast valid ${formatIsoLocal(selectedTime) || selectedTime}`;
+  } else {
+    outlookTitle.textContent = "No forecast hazards expected";
+    outlookMeta.textContent = `For ${formatIsoLocal(selectedTime) || selectedTime}`;
+  }
+  outlook.append(outlookKicker, outlookTitle, outlookMeta);
+  opsHazardList.appendChild(outlook);
+
+  // 3) Derived operational insights.
+  const insights = operationalInsightsForPeriod(selectedWeatherPeriod());
+  if (insights.length) {
+    insights.forEach((insight) => {
       const row = document.createElement("div");
-      row.className = "ops-list-row";
-      const event = document.createElement("strong");
-      event.textContent = [hazard?.phenomena, hazard?.significance].filter(Boolean).join(" ") || "Forecast hazard";
-      const detail = document.createElement("span");
-      detail.textContent = hazard?.code || "NDFD";
-      row.append(event, detail);
+      row.className = `ops-insight ${insight.level || "info"}`;
+      const title = document.createElement("strong");
+      title.textContent = insight.title;
+      const text = document.createElement("span");
+      text.textContent = insight.text;
+      row.append(title, text);
       opsHazardList.appendChild(row);
     });
   } else {
-    opsHazardTitle.textContent = "No NDFD hazard forecast";
-    opsHazardStatus.className = "ops-status severity-none";
-    opsHazardStatus.textContent = `No long-duration NDFD hazard at ${formatIsoLocal(selectedTime) || selectedTime}`;
-    const empty = document.createElement("div");
-    empty.className = "ops-empty-state";
-    empty.innerHTML = "<strong>Forecast hazard guidance: None at this point</strong><span>NDFD shows no long-duration watch, warning, or advisory for the selected forecast time. Short-duration warnings can still appear in the NWS active-now signal below.</span>";
-    opsHazardList.appendChild(empty);
-  }
-
-  const insights = operationalInsightsForPeriod(selectedWeatherPeriod());
-  insights.forEach((insight) => {
-    const row = document.createElement("div");
-    row.className = `ops-insight ${insight.level || "info"}`;
+    const calm = document.createElement("div");
+    calm.className = "ops-insight info";
     const title = document.createElement("strong");
-    title.textContent = insight.title;
+    title.textContent = "Operational insight";
     const text = document.createElement("span");
-    text.textContent = insight.text;
-    row.append(title, text);
-    opsHazardList.appendChild(row);
-  });
-
-  const nwsRow = document.createElement("div");
-  nwsRow.className = "ops-secondary-state";
-  const nwsLabel = document.createElement("strong");
-  nwsLabel.textContent = "Active now · NWS";
-  const nwsValue = document.createElement("span");
-  if (currentAlerts.length) {
-    const names = currentAlerts.slice(0, 2).map((alert) => alert?.event).filter(Boolean).join(", ");
-    nwsValue.textContent = `${currentAlerts.length} active · ${names || "Alert in effect"}`;
-    nwsRow.classList.add("active");
-  } else {
-    nwsValue.textContent = "No active alerts";
+    text.textContent = "No additional weather-driven operational concerns stand out for the selected forecast period.";
+    calm.append(title, text);
+    opsHazardList.appendChild(calm);
   }
-  nwsRow.append(nwsLabel, nwsValue);
-  opsHazardList.appendChild(nwsRow);
+
+  opsHazardTitle.textContent = hasActiveAlert
+    ? (currentAlerts[0]?.event || "Active weather alert")
+    : forecastHazards.length
+      ? "Forecast impacts expected"
+      : "No immediate weather impacts";
+  opsHazardStatus.className = hasActiveAlert
+    ? "ops-status severity-moderate"
+    : forecastHazards.length
+      ? `ops-status severity-${forecastClass}`
+      : "ops-status severity-none";
+  opsHazardStatus.textContent = hasActiveAlert
+    ? "Current conditions require attention."
+    : forecastHazards.length
+      ? "Forecast conditions may require attention."
+      : "No immediate weather-related action indicated.";
 }
 
 async function loadNdfdHazards(latValue, lonValue) {
@@ -517,10 +544,10 @@ async function loadNdfdHazards(latValue, lonValue) {
   ndfdHazardLocationKey = key;
   ndfdHazardSeries = [];
   ndfdHazardError = null;
-  if (opsHazardTitle) opsHazardTitle.textContent = "Loading NDFD forecast hazards…";
+  if (opsHazardTitle) opsHazardTitle.textContent = "Loading forecast impacts…";
   if (opsHazardStatus) {
     opsHazardStatus.className = "ops-status severity-none";
-    opsHazardStatus.textContent = "Fetching long-duration hazard guidance for this point.";
+    opsHazardStatus.textContent = "Loading forecast hazard guidance for this location.";
   }
 
   try {
@@ -533,7 +560,7 @@ async function loadNdfdHazards(latValue, lonValue) {
     if (payload?.error) throw new Error(String(payload.error));
     ndfdHazardSeries = Array.isArray(payload?.periods) ? payload.periods : [];
   } catch (error) {
-    ndfdHazardError = "NDFD forecast hazards unavailable";
+    ndfdHazardError = "Forecast hazard data unavailable";
     console.error(error);
   }
   renderHazardCard();
@@ -613,6 +640,87 @@ function operationalInsightsForPeriod(period) {
   return insights.slice(0, 3);
 }
 
+function renderWeatherTrend(periods, selectedPeriod) {
+  if (!opsWeatherTrend) return;
+  opsWeatherTrend.innerHTML = "";
+  const rows = (Array.isArray(periods) ? periods : [])
+    .filter((period) => Number.isFinite(Number(period?.temperature)))
+    .slice(0, 6);
+
+  if (opsWeatherTrendRange) {
+    opsWeatherTrendRange.textContent = rows.length ? "Next forecast periods" : "No trend data";
+  }
+  if (rows.length < 2) return;
+
+  const width = 640;
+  const height = 150;
+  const padX = 34;
+  const padTop = 18;
+  const padBottom = 34;
+  const temps = rows.map((period) => Number(period.temperature));
+  const minTemp = Math.min(...temps);
+  const maxTemp = Math.max(...temps);
+  const spread = Math.max(8, maxTemp - minTemp);
+  const low = minTemp - Math.max(2, spread * 0.16);
+  const high = maxTemp + Math.max(2, spread * 0.16);
+
+  const xFor = (index) => padX + (index * (width - padX * 2)) / Math.max(1, rows.length - 1);
+  const yFor = (temp) => padTop + ((high - temp) / (high - low)) * (height - padTop - padBottom);
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.classList.add("weather-trend-svg");
+
+  [0.25, 0.5, 0.75].forEach((ratio) => {
+    const line = document.createElementNS(svg.namespaceURI, "line");
+    const y = padTop + ratio * (height - padTop - padBottom);
+    line.setAttribute("x1", String(padX));
+    line.setAttribute("x2", String(width - padX));
+    line.setAttribute("y1", String(y));
+    line.setAttribute("y2", String(y));
+    line.setAttribute("class", "weather-trend-grid");
+    svg.appendChild(line);
+  });
+
+  const points = rows.map((period, index) => [xFor(index), yFor(Number(period.temperature))]);
+  const path = document.createElementNS(svg.namespaceURI, "path");
+  const d = points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+  path.setAttribute("d", d);
+  path.setAttribute("class", "weather-trend-line");
+  svg.appendChild(path);
+
+  rows.forEach((period, index) => {
+    const [x, y] = points[index];
+    const isSelected = selectedPeriod && period === selectedPeriod;
+
+    const marker = document.createElementNS(svg.namespaceURI, "circle");
+    marker.setAttribute("cx", String(x));
+    marker.setAttribute("cy", String(y));
+    marker.setAttribute("r", isSelected ? "5.5" : "4");
+    marker.setAttribute("class", isSelected ? "weather-trend-dot selected" : "weather-trend-dot");
+    svg.appendChild(marker);
+
+    const tempText = document.createElementNS(svg.namespaceURI, "text");
+    tempText.setAttribute("x", String(x));
+    tempText.setAttribute("y", String(y - 10));
+    tempText.setAttribute("text-anchor", "middle");
+    tempText.setAttribute("class", "weather-trend-temp");
+    tempText.textContent = `${Math.round(Number(period.temperature))}°`;
+    svg.appendChild(tempText);
+
+    const label = document.createElementNS(svg.namespaceURI, "text");
+    label.setAttribute("x", String(x));
+    label.setAttribute("y", String(height - 8));
+    label.setAttribute("text-anchor", "middle");
+    label.setAttribute("class", "weather-trend-label");
+    label.textContent = String(period?.name || "").replace("Night", " N").slice(0, 10);
+    svg.appendChild(label);
+  });
+
+  opsWeatherTrend.appendChild(svg);
+}
+
 function renderSelectedTimeWeather() {
   if (!lastPayload) return;
   const wx = lastPayload?.weather || {};
@@ -677,10 +785,13 @@ function renderSelectedTimeWeather() {
     });
   }
 
+  const trendPeriods = Array.isArray(wx?.forecast_periods) ? wx.forecast_periods : [];
+  renderWeatherTrend(trendPeriods, period);
+
   if (opsForecastStrip) {
     opsForecastStrip.innerHTML = "";
-    const periods = Array.isArray(wx?.forecast_periods) ? wx.forecast_periods : [];
-    periods.slice(0, 6).forEach((entry) => {
+    const periods = trendPeriods;
+    periods.slice(0, 5).forEach((entry) => {
       const item = document.createElement("div");
       item.className = "forecast-period";
       const label = document.createElement("span");

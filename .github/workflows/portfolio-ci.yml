@@ -81,6 +81,11 @@ jobs:
           grep -q 'Power &amp; Site' frontend/index.html
           grep -q 'LIVE · NOW' frontend/index.html
           grep -q 'id="opsWeatherMetrics"' frontend/index.html
+          grep -q 'id="opsWeatherTrend"' frontend/index.html
+          grep -q 'Temperature trend' frontend/index.html
+          grep -q 'renderWeatherTrend' frontend/static/app.js
+          grep -q 'Active Alert' frontend/static/app.js
+          grep -q 'Forecast Outlook' frontend/static/app.js
           grep -q 'id="opsPowerSiteMeta"' frontend/index.html
           grep -q 'id="opsOpenGoogleMaps"' frontend/index.html
           grep -q 'id="opsOpenOutageMap"' frontend/index.html
@@ -125,11 +130,12 @@ jobs:
             exit 1
           fi
           grep -q 'forecastTimeSlider.min = hasTimes ? String(currentForecastTimeIndex)' frontend/static/app.js
-          grep -q 'ops-empty-state' frontend/static/app.js
+          grep -q 'active-alert-block' frontend/static/app.js
+          grep -q 'forecast-outlook-block' frontend/static/app.js
+          grep -q 'Operational insight' frontend/static/app.js
           grep -q 'demoSiteMarkers' frontend/static/app.js
           grep -q '/api/forecast/times' frontend/static/app.js
           grep -q '/api/forecast/point-hazards' frontend/static/app.js
-          grep -q 'Active now · NWS' frontend/static/app.js
           grep -q '/static/assets/weather-icons/weather/' frontend/static/app.js
           grep -q '/static/assets/weather-icons/weather/' frontend/index.html
           grep -q 'World_Light_Gray_Base' frontend/static/app.js

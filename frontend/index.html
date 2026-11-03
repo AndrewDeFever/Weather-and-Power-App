@@ -6,7 +6,7 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102m">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102n">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
@@ -114,7 +114,14 @@
             </div>
             <p id="opsForecastSummary" class="ops-card-summary">Search a site to load forecast context.</p>
             <div id="opsWeatherMetrics" class="weather-metrics"></div>
-            <div id="opsForecastStrip" class="forecast-strip" aria-label="Upcoming forecast periods"></div>
+            <div class="weather-trend-panel">
+              <div class="weather-trend-head">
+                <span>Temperature trend</span>
+                <span id="opsWeatherTrendRange">Next forecast periods</span>
+              </div>
+              <div id="opsWeatherTrend" class="weather-trend" role="img" aria-label="Temperature trend for upcoming forecast periods"></div>
+            </div>
+            <div id="opsForecastStrip" class="forecast-strip compact-forecast-strip" aria-label="Upcoming forecast periods"></div>
           </article>
 
           <article class="ops-card hazards-card">
@@ -192,6 +199,6 @@
   </footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js?v=20261102m"></script>
+  <script src="/static/app.js?v=20261102n"></script>
 </body>
 </html>
