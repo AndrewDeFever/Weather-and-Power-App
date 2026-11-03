@@ -84,6 +84,11 @@ jobs:
           grep -q 'id="opsWeatherTrend"' frontend/index.html
           grep -q 'Temperature trend' frontend/index.html
           grep -q 'renderWeatherTrend' frontend/static/app.js
+          grep -q 'conciseCondition' frontend/static/app.js
+          grep -q 'formatEtrForDisplay' frontend/static/app.js
+          grep -q 'Next period:' frontend/static/app.js
+          grep -q 'Operational insight · Severe storms' frontend/static/app.js
+          grep -q 'Operational insight · Rain chance' frontend/static/app.js
           grep -q 'Active Alert' frontend/static/app.js
           grep -q 'Forecast Outlook' frontend/static/app.js
           grep -q 'id="opsPowerSiteMeta"' frontend/index.html
