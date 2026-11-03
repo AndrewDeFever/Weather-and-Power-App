@@ -1668,3 +1668,93 @@ main .container{
 @media (max-width:760px){
   .compact-forecast-strip{grid-template-columns:repeat(3,minmax(0,1fr));}
 }
+
+
+/* Four-card time semantics and dominant card titles */
+.ops-card-grid{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  align-items:start;
+  gap:14px;
+}
+.ops-card{
+  min-height:0;
+  align-self:start;
+}
+.selected-time-card,
+.next24-card,
+.hazards-card,
+.power-card{
+  grid-column:auto;
+}
+.ops-card-head{
+  align-items:start;
+}
+.compact-card-head{
+  grid-template-columns:auto minmax(0,1fr);
+}
+.ops-card-heading{
+  min-width:0;
+}
+.ops-card-title{
+  margin:0;
+  color:#f4f9ff;
+  font-size:1.08rem;
+  font-weight:900;
+  line-height:1.15;
+  letter-spacing:.01em;
+}
+.ops-card-title-meta{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.ops-card-heading h3{
+  margin:6px 0 0;
+  color:#dbeaf5;
+  font-size:.86rem;
+  font-weight:800;
+  line-height:1.25;
+}
+.ops-card-context{
+  display:block;
+  margin-top:5px;
+  color:#86a6be;
+  font-size:.66rem;
+  font-weight:800;
+}
+.selected-time-card .ops-card-head{
+  grid-template-columns:auto minmax(0,1fr) auto;
+}
+.selected-time-card .ops-card-summary{
+  margin-top:10px;
+}
+.next24-card .weather-trend-panel{
+  margin-top:12px;
+}
+.next24-card .forecast-strip{
+  margin-top:0;
+}
+.power-provider-line{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:6px;
+}
+.power-provider-line h3{
+  margin:0;
+  color:#f6fbff;
+  font-size:.94rem;
+}
+.power-provider-line .time-domain-badge{
+  margin-top:0;
+}
+.hazards-card .ops-list{
+  margin-top:12px;
+}
+.power-site-meta{
+  margin-top:12px;
+}
+@media (max-width:900px){
+  .ops-card-grid{grid-template-columns:1fr;}
+}
