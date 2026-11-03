@@ -141,3 +141,4 @@ def test_ndfd_hazard_cache_key_rounds_point():
 def test_weather_payload_exposes_selected_time_fields():
     weather = api_mod.empty_weather()
     assert "relative_humidity_pct" in weather
+    assert "hourly_periods" in weather
