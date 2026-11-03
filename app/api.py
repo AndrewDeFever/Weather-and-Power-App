@@ -798,6 +798,31 @@ def _largest_rgb_label_map(value: Any) -> Dict[str, str]:
     return best
 
 
+def _named_rgb_label_map(value: Any, token: str) -> Dict[str, str]:
+    token_lower = token.lower()
+    candidates: List[Dict[str, str]] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for key, child in node.items():
+                if token_lower in str(key).lower():
+                    direct = _direct_rgb_label_map(child)
+                    if direct:
+                        candidates.append(direct)
+                    nested = _largest_rgb_label_map(child)
+                    if nested:
+                        candidates.append(nested)
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(value)
+    if candidates:
+        return max(candidates, key=len)
+    return {}
+
+
 def _load_ndfd_wwa_color_map() -> Dict[str, str]:
     now = time.time()
     with _NDFD_WWA_MAP_CACHE_LOCK:
@@ -814,7 +839,7 @@ def _load_ndfd_wwa_color_map() -> Dict[str, str]:
     )
     response.raise_for_status()
     payload = json.loads(response.text)
-    colors = _largest_rgb_label_map(payload)
+    colors = _named_rgb_label_map(payload, "wwa") or _largest_rgb_label_map(payload)
     if len(colors) < 20:
         raise RuntimeError("NOAA NDFD grid metadata did not expose the expected WWA color map")
     with _NDFD_WWA_MAP_CACHE_LOCK:
