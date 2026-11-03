@@ -33,6 +33,23 @@ def test_api_status_returns_json_and_is_resilient(monkeypatch):
         assert k in data
 
 
+
+
+def test_unique_city_names_resolve_directly():
+    site_id, site = api_mod._resolve_site("Tulsa")
+    assert site_id == "DEMO_TUL_01"
+    assert site["city"] == "Tulsa"
+
+    site_id, site = api_mod._resolve_site("Tulsa, OK")
+    assert site_id == "DEMO_TUL_01"
+    assert site["state"] == "OK"
+
+
+def test_ambiguous_city_name_does_not_silently_choose_site():
+    site_id, site = api_mod._resolve_site("Austin")
+    assert site_id is None
+    assert site is None
+
 def test_api_status_wraps_provider_exceptions(monkeypatch):
     # Force a provider failure and ensure endpoint still returns JSON with meta.error.
     def boom_weather(lat: float, lon: float):
