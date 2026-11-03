@@ -1680,13 +1680,13 @@ function initForecastMap() {
 
   forecastMap = window.L.map(forecastMapEl, {
     zoomControl: false,
-    attributionControl: false,
+    attributionControl: true,
     minZoom: 3,
     maxZoom: 18,
   }).setView([37.5, -96.5], 4);
 
   window.L.control.zoom({ position: "bottomright" }).addTo(forecastMap);
-  window.L.control.attribution({ position: "bottomleft" }).addTo(forecastMap);
+  forecastMap.attributionControl.setPosition("bottomleft");
 
   window.L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
     maxZoom: 16,
