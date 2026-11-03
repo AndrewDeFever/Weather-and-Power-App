@@ -275,6 +275,7 @@ def empty_weather(error: Optional[str] = None) -> Dict[str, Any]:
         "precip_last_hour_in": None,
         "wind_chill_f": None,
         "heat_index_f": None,
+        "relative_humidity_pct": None,
         "observation_time": None,
         "station_id": None,
         "temp_kind": None,
@@ -506,10 +507,13 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
 
             wind_chill = (obs_props.get("windChill") or {}).get("value")
             heat_index = (obs_props.get("heatIndex") or {}).get("value")
+            relative_humidity = (obs_props.get("relativeHumidity") or {}).get("value")
             if isinstance(wind_chill, (int, float)):
                 out["wind_chill_f"] = round(c_to_f(float(wind_chill)), 1)
             if isinstance(heat_index, (int, float)):
                 out["heat_index_f"] = round(c_to_f(float(heat_index)), 1)
+            if isinstance(relative_humidity, (int, float)):
+                out["relative_humidity_pct"] = round(float(relative_humidity), 0)
             out["condition"] = obs_props.get("textDescription")
         except Exception:
             pass
@@ -532,6 +536,8 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
                         "temperature_unit": p.get("temperatureUnit"),
                         "wind_speed": p.get("windSpeed"),
                         "wind_direction": p.get("windDirection"),
+                        "precip_probability": (p.get("probabilityOfPrecipitation") or {}).get("value"),
+                        "relative_humidity": (p.get("relativeHumidity") or {}).get("value"),
                         "short_forecast": p.get("shortForecast"),
                         "detailed_forecast": p.get("detailedForecast"),
                     }
