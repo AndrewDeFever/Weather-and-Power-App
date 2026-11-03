@@ -975,7 +975,7 @@ def forecast_legend(
             if season is not None
             else _temperature_season_code_for_month(datetime.now().month)
         )
-        element = "t"
+        elements = ("t", "temp")
         native_unit = "°F"
         display_unit = "°F"
         display_factor = 1.0
@@ -988,14 +988,14 @@ def forecast_legend(
         )
     elif layer_key == "pop12":
         season_code = 1
-        element = "pop12"
+        elements = ("pop12",)
         native_unit = "%"
         display_unit = "%"
         display_factor = 1.0
         season_label = None
     elif layer_key == "wind":
         season_code = 1
-        element = "windspd"
+        elements = ("windspd",)
         native_unit = "kt"
         display_unit = "mph"
         display_factor = 1.1507794
@@ -1003,10 +1003,23 @@ def forecast_legend(
     else:
         return {"layer": layer_key, "kind": None, "stops": [], "error": "Unsupported forecast layer"}
 
-    try:
-        stops = _load_ndfd_colortable(element, season_code=season_code)
-    except Exception:
-        log.exception("NDFD legend table request failed layer=%s element=%s", layer_key, element)
+    stops: List[Dict[str, Any]] = []
+    element = elements[0]
+    last_error: Optional[Exception] = None
+    for candidate in elements:
+        try:
+            stops = _load_ndfd_colortable(candidate, season_code=season_code)
+            element = candidate
+            break
+        except Exception as exc:
+            last_error = exc
+    if not stops:
+        log.error(
+            "NDFD legend table request failed layer=%s elements=%s error=%s",
+            layer_key,
+            ",".join(elements),
+            last_error,
+        )
         return {
             "layer": layer_key,
             "kind": "scalar",
