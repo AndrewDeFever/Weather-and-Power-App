@@ -142,3 +142,114 @@ def test_weather_payload_exposes_selected_time_fields():
     weather = api_mod.empty_weather()
     assert "relative_humidity_pct" in weather
     assert "hourly_periods" in weather
+
+
+
+def test_temperature_season_mapping_matches_noaa_viewer_calendar():
+    assert api_mod._temperature_season_code_for_month(1) == -1
+    assert api_mod._temperature_season_code_for_month(3) == 0
+    assert api_mod._temperature_season_code_for_month(7) == 1
+    assert api_mod._temperature_season_code_for_month(10) == 0
+    assert api_mod._temperature_season_code_for_month(12) == -1
+
+
+def test_weather_legend_uses_verified_noaa_categories():
+    payload = api_mod.forecast_legend(layer="weather", season=None)
+    assert payload["kind"] == "categorical"
+    precipitation = {item["label"]: item["color"] for item in payload["groups"]["precipitation"]}
+    secondary = {item["label"]: item["color"] for item in payload["groups"]["secondary"]}
+    assert precipitation["Rain chance"] == "#C6FFAD"
+    assert precipitation["Ice likely"] == "#CE9CFF"
+    assert secondary["Severe"] == "#FF0000"
+    assert secondary["Other"] == "#FFEFE7"
+
+
+def test_ndfd_colortable_parser_uses_authoritative_endpoint(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        text = '[["-10", "1", "2", "3"], ["32", "40", "55", "160"]]'
+        content = text.encode("utf-8")
+        headers = {"content-type": "text/html; charset=UTF-8"}
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured["params"] = kwargs.get("params")
+        return FakeResponse()
+
+    api_mod._NDFD_LEGEND_CACHE.clear()
+    monkeypatch.setattr(api_mod, "limited_requests_get", fake_get)
+    rows = api_mod._load_ndfd_colortable("t", season_code=0)
+
+    assert captured["url"] == api_mod.NDFD_COLORTABLE
+    assert captured["params"]["element"] == "t"
+    assert captured["params"]["season"] == "spring"
+    assert rows == [
+        {"value": -10.0, "color": "#010203"},
+        {"value": 32.0, "color": "#2837A0"},
+    ]
+
+
+def test_temperature_wms_passes_explicit_season(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        content = b"png"
+        headers = {"content-type": "image/png"}
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured["params"] = kwargs.get("params")
+        return FakeResponse()
+
+    monkeypatch.setattr(api_mod, "limited_requests_get", fake_get)
+    response = api_mod.forecast_wms(
+        layer="temperature",
+        bbox="-1000000,-1000000,1000000,1000000",
+        vtit="2026-11-03T12:00",
+        season=0,
+        width=256,
+        height=256,
+    )
+
+    assert response.status_code == 200
+    assert captured["url"] == api_mod.NDFD_WMS
+    assert captured["params"]["LAYERS"] == "ndfd.conus.t"
+    assert captured["params"]["VTIT"] == "2026-11-03T12:00"
+    assert captured["params"]["SEASON"] == "0"
+
+
+def test_hazard_legend_proxy_uses_viewport_and_valid_time(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        content = b"png"
+        headers = {"content-type": "image/png"}
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **kwargs):
+        captured["url"] = url
+        captured["params"] = kwargs.get("params")
+        return FakeResponse()
+
+    monkeypatch.setattr(api_mod, "limited_requests_get", fake_get)
+    response = api_mod.forecast_legend_image(
+        bbox="-11300000,4300000,-10600000,5000000",
+        vtit="2026-11-03T18:00:00Z",
+        width=900,
+    )
+
+    assert response.status_code == 200
+    assert captured["url"] == api_mod.NDFD_VIEWER_LEGEND
+    assert captured["params"]["element"] == "wwa"
+    assert captured["params"]["vt"] == "2026-11-03T18:00"
+    assert captured["params"]["left"] == "-11300000.0"
+    assert captured["params"]["top"] == "5000000.0"
