@@ -206,6 +206,7 @@ const subhead = $("subhead");
 const mapIntelTitle = $("mapIntelTitle");
 const mapIntelMeta = $("mapIntelMeta");
 const forecastMapEl = $("forecastMap");
+const forecastLegend = $("forecastLegend");
 const mapStatus = $("mapStatus");
 const forecastTimeSlider = $("forecastTimeSlider");
 const forecastTimeReadout = $("forecastTimeReadout");
@@ -1434,6 +1435,8 @@ let forecastTimes = [];
 let selectedForecastTimeIndex = 0;
 let currentForecastTimeIndex = 0;
 let selectedDemoSiteId = null;
+let forecastLegendRequestId = 0;
+const forecastLegendCache = new Map();
 const demoSiteMarkers = new Map();
 
 const DEMO_MARKER_STYLE = {
@@ -1452,6 +1455,221 @@ const SELECTED_MARKER_STYLE = {
   fillOpacity: 0.96,
 };
 
+
+function currentTemperatureSeasonCode() {
+  const month = new Date().getMonth() + 1;
+  if ([12, 1, 2].includes(month)) return -1;
+  if ([6, 7, 8, 9].includes(month)) return 1;
+  return 0;
+}
+
+function forecastLayerLabel(layerKey) {
+  return {
+    weather: "Weather",
+    temperature: "Temperature",
+    pop12: "Precipitation %",
+    wind: "Wind Speed",
+    hazards: "Forecast Hazards",
+  }[layerKey] || "Forecast";
+}
+
+function setForecastLegendLoading(message = "Loading NOAA legend…") {
+  if (!forecastLegend) return;
+  forecastLegend.innerHTML = "";
+  const loading = document.createElement("div");
+  loading.className = "forecast-legend-loading";
+  loading.textContent = message;
+  forecastLegend.appendChild(loading);
+}
+
+function legendSwatch(label, color) {
+  const item = document.createElement("span");
+  item.className = "forecast-legend-swatch";
+  const chip = document.createElement("i");
+  chip.style.background = color;
+  const text = document.createElement("span");
+  text.textContent = label;
+  item.append(chip, text);
+  return item;
+}
+
+function renderCategoricalForecastLegend(payload) {
+  if (!forecastLegend) return;
+  forecastLegend.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "forecast-legend-head";
+  const title = document.createElement("strong");
+  title.textContent = "Weather";
+  const meta = document.createElement("span");
+  meta.textContent = "NOAA NDFD categorical legend";
+  head.append(title, meta);
+
+  const body = document.createElement("div");
+  body.className = "forecast-legend-categories";
+
+  const precip = document.createElement("div");
+  precip.className = "forecast-legend-category-group";
+  const precipitation = payload?.groups?.precipitation || [];
+  precipitation.forEach((item) => precip.appendChild(legendSwatch(item.label, item.color)));
+
+  const secondary = document.createElement("div");
+  secondary.className = "forecast-legend-category-group secondary";
+  const secondaryItems = payload?.groups?.secondary || [];
+  secondaryItems.forEach((item) => secondary.appendChild(legendSwatch(item.label, item.color)));
+
+  body.append(precip, secondary);
+  forecastLegend.append(head, body);
+}
+
+function formatLegendTick(value, unit) {
+  if (!Number.isFinite(value)) return "";
+  const rounded = Math.abs(value) >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${rounded}${unit || ""}`;
+}
+
+function renderScalarForecastLegend(payload) {
+  if (!forecastLegend) return;
+  const stops = Array.isArray(payload?.stops) ? payload.stops : [];
+  if (!stops.length) {
+    setForecastLegendLoading("NOAA legend unavailable");
+    return;
+  }
+
+  const min = Number(payload.min);
+  const max = Number(payload.max);
+  const range = max - min;
+  if (!Number.isFinite(min) || !Number.isFinite(max) || range <= 0) {
+    setForecastLegendLoading("NOAA legend unavailable");
+    return;
+  }
+
+  const displayFactor = Number(payload.display_factor) || 1;
+  const displayUnit = String(payload.display_unit || "");
+  const gradientStops = stops
+    .map((stop) => {
+      const value = Number(stop?.value);
+      const color = String(stop?.color || "");
+      if (!Number.isFinite(value) || !/^#[0-9A-F]{6}$/i.test(color)) return null;
+      const pct = ((value - min) / range) * 100;
+      return `${color} ${Math.max(0, Math.min(100, pct)).toFixed(3)}%`;
+    })
+    .filter(Boolean);
+
+  if (!gradientStops.length) {
+    setForecastLegendLoading("NOAA legend unavailable");
+    return;
+  }
+
+  forecastLegend.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "forecast-legend-head";
+  const title = document.createElement("strong");
+  title.textContent = forecastLayerLabel(payload.layer);
+  const meta = document.createElement("span");
+  const metaParts = ["NOAA NDFD"];
+  if (payload.season_label) metaParts.push(payload.season_label);
+  if (payload.layer === "wind") metaParts.push("native colors: kt · labels: mph");
+  head.append(title);
+  meta.textContent = metaParts.join(" · ");
+  head.append(meta);
+
+  const scale = document.createElement("div");
+  scale.className = "forecast-legend-scale";
+
+  const bar = document.createElement("div");
+  bar.className = "forecast-legend-gradient";
+  bar.style.background = `linear-gradient(90deg,${gradientStops.join(",")})`;
+
+  if (payload.layer === "temperature" && min <= 32 && max >= 32) {
+    const freeze = document.createElement("span");
+    freeze.className = "forecast-freezing-marker";
+    freeze.style.left = `${((32 - min) / range) * 100}%`;
+    freeze.title = "32°F freezing";
+    const freezeLabel = document.createElement("b");
+    freezeLabel.textContent = "32°F";
+    freeze.appendChild(freezeLabel);
+    bar.appendChild(freeze);
+  }
+
+  const ticks = document.createElement("div");
+  ticks.className = "forecast-legend-ticks";
+  for (let i = 0; i < 5; i += 1) {
+    const nativeValue = min + (range * i) / 4;
+    const tick = document.createElement("span");
+    tick.textContent = formatLegendTick(nativeValue * displayFactor, displayUnit);
+    ticks.appendChild(tick);
+  }
+
+  scale.append(bar, ticks);
+  forecastLegend.append(head, scale);
+}
+
+async function loadStaticForecastLegend(layerKey) {
+  if (!forecastLegend || layerKey === "hazards") return;
+  const season = layerKey === "temperature" ? currentTemperatureSeasonCode() : null;
+  const cacheKey = `${layerKey}:${season ?? "na"}`;
+  const cached = forecastLegendCache.get(cacheKey);
+  if (cached) {
+    if (cached.kind === "categorical") renderCategoricalForecastLegend(cached);
+    else renderScalarForecastLegend(cached);
+    return;
+  }
+
+  const requestId = ++forecastLegendRequestId;
+  setForecastLegendLoading();
+  try {
+    const url = new URL("/api/forecast/legend", window.location.origin);
+    url.searchParams.set("layer", layerKey);
+    if (season !== null) url.searchParams.set("season", String(season));
+    const response = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`Forecast legend failed (${response.status})`);
+    const payload = await response.json();
+    if (payload?.error) throw new Error(String(payload.error));
+    forecastLegendCache.set(cacheKey, payload);
+    if (requestId !== forecastLegendRequestId || activeForecastLayer !== layerKey) return;
+    if (payload.kind === "categorical") renderCategoricalForecastLegend(payload);
+    else renderScalarForecastLegend(payload);
+  } catch (error) {
+    if (requestId === forecastLegendRequestId && activeForecastLayer === layerKey) {
+      setForecastLegendLoading("NOAA legend unavailable");
+    }
+    console.error(error);
+  }
+}
+
+function renderDynamicHazardLegend(bbox, width, vtit) {
+  if (!forecastLegend || activeForecastLayer !== "hazards") return;
+  forecastLegend.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "forecast-legend-head";
+  const title = document.createElement("strong");
+  title.textContent = "Forecast Hazards";
+  const meta = document.createElement("span");
+  meta.textContent = "NOAA visible categories · current viewport + selected time";
+  head.append(title, meta);
+
+  const wrap = document.createElement("div");
+  wrap.className = "forecast-hazard-legend";
+  const img = document.createElement("img");
+  img.alt = "NOAA forecast hazard legend for the visible map area and selected forecast time";
+  const url = new URL("/api/forecast/legend-image", window.location.origin);
+  url.searchParams.set("bbox", bbox);
+  url.searchParams.set("width", String(Math.max(240, Math.min(1400, width))));
+  url.searchParams.set("vtit", vtit);
+  img.src = url.toString();
+  img.addEventListener("error", () => {
+    wrap.innerHTML = "";
+    const note = document.createElement("span");
+    note.className = "forecast-hazard-legend-note";
+    note.textContent = "Dynamic NOAA hazard legend unavailable. Do not interpret this as no hazards.";
+    wrap.appendChild(note);
+  });
+  wrap.appendChild(img);
+  forecastLegend.append(head, wrap);
+}
+
 function initForecastMap() {
   if (!forecastMapEl) return;
 
@@ -1461,11 +1679,14 @@ function initForecastMap() {
   }
 
   forecastMap = window.L.map(forecastMapEl, {
-    zoomControl: true,
-    attributionControl: true,
+    zoomControl: false,
+    attributionControl: false,
     minZoom: 3,
     maxZoom: 18,
   }).setView([37.5, -96.5], 4);
+
+  window.L.control.zoom({ position: "bottomright" }).addTo(forecastMap);
+  window.L.control.attribution({ position: "bottomleft" }).addTo(forecastMap);
 
   window.L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
     maxZoom: 16,
@@ -1553,12 +1774,19 @@ function refreshForecastOverlay() {
     url.searchParams.set("bbox", bbox);
     url.searchParams.set("width", String(width));
     url.searchParams.set("height", String(height));
+    if (activeForecastLayer === "temperature") {
+      url.searchParams.set("season", String(currentTemperatureSeasonCode()));
+    }
     const selectedVtit = forecastTimes[selectedForecastTimeIndex] || null;
     if (!selectedVtit) {
       if (mapStatus) mapStatus.textContent = "Forecast valid times unavailable";
       return;
     }
     url.searchParams.set("vtit", selectedVtit);
+
+    if (activeForecastLayer === "hazards") {
+      renderDynamicHazardLegend(bbox, width, selectedVtit);
+    }
 
     if (forecastWmsLayer) {
       forecastMap.removeLayer(forecastWmsLayer);
@@ -1685,6 +1913,12 @@ async function loadForecastTimes(layerKey) {
 
 async function setForecastLayer(layerKey) {
   activeForecastLayer = layerKey;
+  forecastLegendRequestId += 1;
+  if (layerKey === "hazards") {
+    setForecastLegendLoading("Loading NOAA hazard legend…");
+  } else {
+    void loadStaticForecastLegend(layerKey);
+  }
   try {
     await loadForecastTimes(layerKey);
     refreshForecastOverlay();
