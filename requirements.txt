@@ -7,3 +7,5 @@ mercantile==1.2.1
 polyline==2.0.4
 uvicorn==0.40.0
 cryptography==50.0.0
+
+Pillow==13.0.0

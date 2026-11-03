@@ -225,12 +225,11 @@ def test_temperature_wms_passes_explicit_season(monkeypatch):
     assert captured["params"]["SEASON"] == "0"
 
 
-def test_hazard_legend_proxy_uses_viewport_and_valid_time(monkeypatch):
+def test_hazard_legend_uses_viewport_raster_and_source_colors(monkeypatch):
     captured = {}
 
     class FakeResponse:
         content = b"png"
-        headers = {"content-type": "image/png"}
 
         def raise_for_status(self):
             return None
@@ -241,18 +240,33 @@ def test_hazard_legend_proxy_uses_viewport_and_valid_time(monkeypatch):
         return FakeResponse()
 
     monkeypatch.setattr(api_mod, "limited_requests_get", fake_get)
-    response = api_mod.forecast_legend_image(
+    monkeypatch.setattr(
+        api_mod,
+        "_load_ndfd_wwa_color_map",
+        lambda: {"#FF0000": "Tornado Warning"},
+    )
+    monkeypatch.setattr(
+        api_mod,
+        "_hazard_items_from_png",
+        lambda content, color_map: [
+            {"label": "Tornado Warning", "color": "#FF0000", "pixels": 42}
+        ],
+    )
+
+    payload = api_mod.forecast_hazard_legend(
         bbox="-11300000,4300000,-10600000,5000000",
         vtit="2026-11-03T18:00:00Z",
         width=900,
+        height=500,
     )
 
-    assert response.status_code == 200
-    assert captured["url"] == api_mod.NDFD_VIEWER_LEGEND
-    assert captured["params"]["element"] == "wwa"
-    assert captured["params"]["vt"] == "2026-11-03T18:00"
-    assert captured["params"]["left"] == "-11300000.0"
-    assert captured["params"]["top"] == "5000000.0"
+    assert payload["error"] is None
+    assert payload["items"][0]["label"] == "Tornado Warning"
+    assert payload["items"][0]["color"] == "#FF0000"
+    assert captured["url"] == api_mod.NDFD_WMS
+    assert captured["params"]["LAYERS"] == "ndfd.conus.wwa"
+    assert captured["params"]["VTIT"] == "2026-11-03T18:00:00Z"
+    assert captured["params"]["BBOX"] == "-11300000.0,4300000.0,-10600000.0,5000000.0"
 
 
 
@@ -274,3 +288,22 @@ def test_temperature_legend_falls_back_to_noaa_temp_alias(monkeypatch):
     assert payload["error"] is None
     assert payload["element"] == "temp"
     assert calls == [("t", 0), ("temp", 0)]
+
+
+
+def test_named_rgb_label_map_prefers_hazard_section():
+    payload = {
+        "wx": {
+            "0 206 0": "Rain likely",
+            "198 255 173": "Rain chance",
+        },
+        "wwa_colormap": {
+            "255 0 0": "Tornado Warning",
+            "255 105 180": "Winter Storm Warning",
+            "123 104 238": "Winter Weather Advisory",
+        },
+    }
+    colors = api_mod._named_rgb_label_map(payload, "wwa")
+    assert colors["#FF0000"] == "Tornado Warning"
+    assert colors["#FF69B4"] == "Winter Storm Warning"
+    assert "#00CE00" not in colors

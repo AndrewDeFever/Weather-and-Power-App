@@ -80,10 +80,11 @@ jobs:
           grep -q 'forecast-legend' frontend/static/electric-theme.css
           grep -q 'currentTemperatureSeasonCode' frontend/static/app.js
           grep -q '/api/forecast/legend' frontend/static/app.js
-          grep -q '/api/forecast/legend-image' frontend/static/app.js
+          grep -q '/api/forecast/hazard-legend' frontend/static/app.js
           grep -q 'position: "bottomright"' frontend/static/app.js
           grep -q 'NDFD_COLORTABLE' app/api.py
-          grep -q 'NDFD_VIEWER_LEGEND' app/api.py
+          grep -q 'NDFD_GRIDDATA' app/api.py
+          grep -q 'weather-legend-ramp' frontend/static/app.js
           if grep -q 'forecast-layer-title' frontend/index.html; then
             echo "Redundant Forecast Layer caption must stay removed."
             exit 1
@@ -139,7 +140,11 @@ jobs:
             echo "Pre-map summary cards must stay removed."
             exit 1
           fi
-          grep -q 'Forecast Hazards' frontend/index.html
+          grep -q 'data-forecast-layer="hazards">Hazards<' frontend/index.html
+          if grep -qE 'Loading NOAA|Loading NDFD|NOAA NDFD categorical legend|Forecast Hazards' frontend/index.html frontend/static/app.js; then
+            echo "Data-source plumbing and legacy hazard labels must stay out of the visible product UI."
+            exit 1
+          fi
           grep -q 'Weather Impacts' frontend/index.html
           if grep -q 'North Star Workspace' frontend/index.html; then
             echo "Map scaffolding header must not return."

@@ -1469,11 +1469,11 @@ function forecastLayerLabel(layerKey) {
     temperature: "Temperature",
     pop12: "Precipitation %",
     wind: "Wind Speed",
-    hazards: "Forecast Hazards",
+    hazards: "Hazards",
   }[layerKey] || "Forecast";
 }
 
-function setForecastLegendLoading(message = "Loading NOAA legend…") {
+function setForecastLegendLoading(message = "Loading legend…") {
   if (!forecastLegend) return;
   forecastLegend.innerHTML = "";
   const loading = document.createElement("div");
@@ -1493,33 +1493,74 @@ function legendSwatch(label, color) {
   return item;
 }
 
+function weatherLegendIcon(kind) {
+  const icon = document.createElement("span");
+  icon.className = "weather-legend-icon";
+  icon.setAttribute("aria-hidden", "true");
+  const svg = {
+    snow: '<svg viewBox="0 0 24 24"><path d="M12 2v20M4.9 6l14.2 12M19.1 6L4.9 18M8.8 4.1 12 7.3l3.2-3.2M8.8 19.9 12 16.7l3.2 3.2M3.7 9.5 8 10.7 6.9 6.4M20.3 14.5 16 13.3l1.1 4.3M20.3 9.5 16 10.7l1.1-4.3M3.7 14.5 8 13.3l-1.1 4.3"/></svg>',
+    mix: '<svg viewBox="0 0 24 24"><path d="M8 3v8M4.6 5l6.8 4M11.4 5 4.6 9M15.5 5.5c0 2-2.6 3.2-2.6 5.8a2.6 2.6 0 0 0 5.2 0c0-2.6-2.6-3.8-2.6-5.8ZM7 15l-1.2 4M13 15l-1.2 4M19 15l-1.2 4"/></svg>',
+    ice: '<svg viewBox="0 0 24 24"><path d="M4 3v11M8 3v16M12 3v9M16 3v17M20 3v12M4 14l2 3 2-3M12 12l2 3 2-3M18 15l2 3 2-3"/></svg>',
+    rain: '<svg viewBox="0 0 24 24"><path d="M6 13h11a4 4 0 0 0 .4-8A6 6 0 0 0 6.2 6.6 3.3 3.3 0 0 0 6 13ZM7 16l-1 3M12 16l-1 3M17 16l-1 3"/></svg>',
+  }[kind] || "";
+  icon.innerHTML = svg;
+  return icon;
+}
+
+function weatherLegendRamp(label, kind, fromColor, toColor) {
+  const item = document.createElement("div");
+  item.className = "weather-legend-ramp";
+
+  const labelWrap = document.createElement("div");
+  labelWrap.className = "weather-legend-label";
+  labelWrap.append(weatherLegendIcon(kind));
+  const text = document.createElement("strong");
+  text.textContent = label;
+  labelWrap.appendChild(text);
+
+  const ramp = document.createElement("div");
+  ramp.className = "weather-legend-gradient";
+  ramp.style.background = `linear-gradient(90deg,${fromColor},${toColor})`;
+  ramp.setAttribute("aria-label", `${label} chance to likely`);
+
+  item.append(labelWrap, ramp);
+  return item;
+}
+
 function renderCategoricalForecastLegend(payload) {
   if (!forecastLegend) return;
   forecastLegend.innerHTML = "";
 
-  const head = document.createElement("div");
-  head.className = "forecast-legend-head";
-  const title = document.createElement("strong");
-  title.textContent = "Weather";
-  const meta = document.createElement("span");
-  meta.textContent = "NOAA NDFD categorical legend";
-  head.append(title, meta);
+  const precipitation = Array.isArray(payload?.groups?.precipitation)
+    ? payload.groups.precipitation
+    : [];
+  const byLabel = new Map(precipitation.map((item) => [item.label, item.color]));
 
-  const body = document.createElement("div");
-  body.className = "forecast-legend-categories";
+  const primary = document.createElement("div");
+  primary.className = "weather-legend-primary";
+  const pairs = [
+    ["Snow", "snow", "Snow chance", "Snow likely"],
+    ["Mix", "mix", "Wintry Mix chance", "Wintry Mix likely"],
+    ["Ice", "ice", "Ice chance", "Ice likely"],
+    ["Rain", "rain", "Rain chance", "Rain likely"],
+  ];
+  pairs.forEach(([label, kind, chanceLabel, likelyLabel]) => {
+    const chance = byLabel.get(chanceLabel);
+    const likely = byLabel.get(likelyLabel);
+    if (chance && likely) {
+      primary.appendChild(weatherLegendRamp(label, kind, chance, likely));
+    }
+  });
 
-  const precip = document.createElement("div");
-  precip.className = "forecast-legend-category-group";
-  const precipitation = payload?.groups?.precipitation || [];
-  precipitation.forEach((item) => precip.appendChild(legendSwatch(item.label, item.color)));
-
+  const secondaryItems = Array.isArray(payload?.groups?.secondary)
+    ? payload.groups.secondary
+    : [];
   const secondary = document.createElement("div");
-  secondary.className = "forecast-legend-category-group secondary";
-  const secondaryItems = payload?.groups?.secondary || [];
+  secondary.className = "weather-legend-secondary";
   secondaryItems.forEach((item) => secondary.appendChild(legendSwatch(item.label, item.color)));
 
-  body.append(precip, secondary);
-  forecastLegend.append(head, body);
+  forecastLegend.append(primary);
+  if (secondaryItems.length) forecastLegend.append(secondary);
 }
 
 function formatLegendTick(value, unit) {
@@ -1566,13 +1607,15 @@ function renderScalarForecastLegend(payload) {
   head.className = "forecast-legend-head";
   const title = document.createElement("strong");
   title.textContent = forecastLayerLabel(payload.layer);
-  const meta = document.createElement("span");
-  const metaParts = ["NOAA NDFD"];
-  if (payload.season_label) metaParts.push(payload.season_label);
-  if (payload.layer === "wind") metaParts.push("native colors: kt · labels: mph");
   head.append(title);
-  meta.textContent = metaParts.join(" · ");
-  head.append(meta);
+  if (payload.season_label || payload.layer === "wind") {
+    const meta = document.createElement("span");
+    const metaParts = [];
+    if (payload.season_label) metaParts.push(payload.season_label);
+    if (payload.layer === "wind") metaParts.push("mph");
+    meta.textContent = metaParts.join(" · ");
+    head.append(meta);
+  }
 
   const scale = document.createElement("div");
   scale.className = "forecast-legend-scale";
@@ -1638,36 +1681,63 @@ async function loadStaticForecastLegend(layerKey) {
   }
 }
 
-function renderDynamicHazardLegend(bbox, width, vtit) {
+async function renderDynamicHazardLegend(bbox, width, height, vtit) {
   if (!forecastLegend || activeForecastLayer !== "hazards") return;
-  forecastLegend.innerHTML = "";
+  const requestId = ++forecastLegendRequestId;
+  setForecastLegendLoading("Loading hazards…");
 
-  const head = document.createElement("div");
-  head.className = "forecast-legend-head";
-  const title = document.createElement("strong");
-  title.textContent = "Forecast Hazards";
-  const meta = document.createElement("span");
-  meta.textContent = "NOAA visible categories · current viewport + selected time";
-  head.append(title, meta);
+  try {
+    const url = new URL("/api/forecast/hazard-legend", window.location.origin);
+    url.searchParams.set("bbox", bbox);
+    url.searchParams.set("width", String(Math.max(240, Math.min(1024, width))));
+    url.searchParams.set("height", String(Math.max(120, Math.min(1024, height))));
+    url.searchParams.set("vtit", vtit);
+    const response = await fetch(url.toString(), { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`Hazard legend failed (${response.status})`);
+    const payload = await response.json();
+    if (requestId !== forecastLegendRequestId || activeForecastLayer !== "hazards") return;
 
-  const wrap = document.createElement("div");
-  wrap.className = "forecast-hazard-legend";
-  const img = document.createElement("img");
-  img.alt = "NOAA forecast hazard legend for the visible map area and selected forecast time";
-  const url = new URL("/api/forecast/legend-image", window.location.origin);
-  url.searchParams.set("bbox", bbox);
-  url.searchParams.set("width", String(Math.max(240, Math.min(1400, width))));
-  url.searchParams.set("vtit", vtit);
-  img.src = url.toString();
-  img.addEventListener("error", () => {
-    wrap.innerHTML = "";
-    const note = document.createElement("span");
-    note.className = "forecast-hazard-legend-note";
-    note.textContent = "Dynamic NOAA hazard legend unavailable. Do not interpret this as no hazards.";
-    wrap.appendChild(note);
-  });
-  wrap.appendChild(img);
-  forecastLegend.append(head, wrap);
+    forecastLegend.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "forecast-legend-head";
+    const title = document.createElement("strong");
+    title.textContent = "Hazards";
+    head.append(title);
+
+    const wrap = document.createElement("div");
+    wrap.className = "forecast-hazard-categories";
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+
+    if (payload?.error) {
+      const note = document.createElement("span");
+      note.className = "forecast-hazard-legend-note";
+      note.textContent = "Hazard legend unavailable.";
+      wrap.appendChild(note);
+    } else if (!items.length) {
+      const note = document.createElement("span");
+      note.className = "forecast-hazard-legend-note";
+      note.textContent = "No legend categories are visible in this map view.";
+      wrap.appendChild(note);
+    } else {
+      items.forEach((item) => wrap.appendChild(legendSwatch(item.label, item.color)));
+    }
+
+    forecastLegend.append(head, wrap);
+  } catch (error) {
+    if (requestId === forecastLegendRequestId && activeForecastLayer === "hazards") {
+      forecastLegend.innerHTML = "";
+      const head = document.createElement("div");
+      head.className = "forecast-legend-head";
+      const title = document.createElement("strong");
+      title.textContent = "Hazards";
+      head.append(title);
+      const note = document.createElement("span");
+      note.className = "forecast-hazard-legend-note";
+      note.textContent = "Hazard legend unavailable.";
+      forecastLegend.append(head, note);
+    }
+    console.error(error);
+  }
 }
 
 function initForecastMap() {
@@ -1785,7 +1855,7 @@ function refreshForecastOverlay() {
     url.searchParams.set("vtit", selectedVtit);
 
     if (activeForecastLayer === "hazards") {
-      renderDynamicHazardLegend(bbox, width, selectedVtit);
+      void renderDynamicHazardLegend(bbox, width, height, selectedVtit);
     }
 
     if (forecastWmsLayer) {
@@ -1801,7 +1871,7 @@ function refreshForecastOverlay() {
       hazards: "hazards",
     };
     if (mapStatus) {
-      mapStatus.textContent = `Loading NDFD ${labels[activeForecastLayer] || activeForecastLayer}…`;
+      mapStatus.textContent = `Loading ${labels[activeForecastLayer] || activeForecastLayer}…`;
     }
 
     forecastWmsLayer = window.L.imageOverlay(url.toString(), bounds, {
@@ -1817,7 +1887,7 @@ function refreshForecastOverlay() {
     });
     forecastWmsLayer.on("error", () => {
       if (mapStatus) {
-        mapStatus.textContent = `NDFD ${labels[activeForecastLayer] || activeForecastLayer} unavailable`;
+        mapStatus.textContent = `${labels[activeForecastLayer] || activeForecastLayer} unavailable`;
       }
     });
     forecastWmsLayer.addTo(forecastMap);
@@ -1915,7 +1985,7 @@ async function setForecastLayer(layerKey) {
   activeForecastLayer = layerKey;
   forecastLegendRequestId += 1;
   if (layerKey === "hazards") {
-    setForecastLegendLoading("Loading NOAA hazard legend…");
+    setForecastLegendLoading("Loading hazards…");
   } else {
     void loadStaticForecastLegend(layerKey);
   }

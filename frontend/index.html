@@ -6,7 +6,7 @@
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261103e">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261103f">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
@@ -68,7 +68,7 @@
       <div class="grid product-grid" aria-live="polite">
         <section class="map-workspace" aria-label="Forecast and GIS workspace">
           <div id="forecastLegend" class="forecast-legend" aria-live="polite" aria-label="Forecast layer legend">
-            <div class="forecast-legend-loading">Loading NOAA legend…</div>
+            <div class="forecast-legend-loading">Loading legend…</div>
           </div>
           <div class="map-workspace-body">
             <div class="map-stage" aria-label="Forecast and GIS map workspace">
@@ -77,10 +77,10 @@
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="temperature">Temperature</button>
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="pop12">Precipitation %</button>
                 <button class="forecast-layer-btn" type="button" data-forecast-layer="wind">Wind Speed</button>
-                <button class="forecast-layer-btn" type="button" data-forecast-layer="hazards">Forecast Hazards</button>
+                <button class="forecast-layer-btn" type="button" data-forecast-layer="hazards">Hazards</button>
               </div>
               <div id="forecastMap" class="forecast-map" role="application" aria-label="Interactive weather and GIS map"></div>
-              <div id="mapStatus" class="map-status">Loading NDFD weather…</div>
+              <div id="mapStatus" class="map-status">Loading weather…</div>
               <div class="forecast-timebar" aria-label="Forecast valid time">
                 <button id="forecastCurrentTime" class="forecast-current-btn active" type="button" aria-label="Jump to current forecast time" aria-pressed="true">Current</button>
                 <button id="forecastPrevTime" class="time-step-btn" type="button" aria-label="Previous forecast time">‹</button>
@@ -221,6 +221,6 @@
   </footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js?v=20261103c"></script>
+  <script src="/static/app.js?v=20261103d"></script>
 </body>
 </html>
