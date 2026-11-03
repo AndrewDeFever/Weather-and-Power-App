@@ -92,7 +92,7 @@ jobs:
             exit 1
           fi
           grep -q 'Forecast Hazards' frontend/index.html
-          grep -q 'Forecast Hazards · NDFD' frontend/index.html
+          grep -q 'Weather Impacts' frontend/index.html
           if grep -q 'North Star Workspace' frontend/index.html; then
             echo "Map scaffolding header must not return."
             exit 1
