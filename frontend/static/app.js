@@ -1985,7 +1985,7 @@ async function setForecastLayer(layerKey) {
   activeForecastLayer = layerKey;
   forecastLegendRequestId += 1;
   if (layerKey === "hazards") {
-    setForecastLegendLoading("Loading NOAA hazard legend…");
+    setForecastLegendLoading("Loading hazards…");
   } else {
     void loadStaticForecastLegend(layerKey);
   }
