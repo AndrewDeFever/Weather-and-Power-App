@@ -443,14 +443,14 @@ function renderOpsCards(data) {
     opsHazardStatus.className = `ops-status severity-${severityClass}`;
     opsHazardStatus.textContent = alerts.length
       ? `Highest severity: ${severityClass}`
-      : "No active NWS alerts for the selected location.";
+      : "No active NWS alerts at the selected point.";
   }
   if (opsHazardList) {
     opsHazardList.innerHTML = "";
     if (!alerts.length) {
       const calm = document.createElement("div");
       calm.className = "ops-empty-state";
-      calm.innerHTML = "<strong>Operational weather risk: Low</strong><span>No active advisories, watches, or warnings are affecting this selected point.</span>";
+      calm.innerHTML = "<strong>No active alert polygon at this point</strong><span>NDFD forecast shading on the map is forecast guidance and can still show impactful weather even when no active NWS alert is in effect here.</span>";
       opsHazardList.appendChild(calm);
     } else {
       alerts.slice(0, 4).forEach((alert) => {
