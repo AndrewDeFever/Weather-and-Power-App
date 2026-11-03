@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>SubReal Studios | Weather & Power Status</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
   <link rel="stylesheet" href="/static/styles.css?v=20260907a">
-  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102h">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261102i">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 
@@ -45,17 +45,6 @@
             <span id="statusDot" class="dot"></span>
             <span id="statusText">Idle</span>
           </div>
-          <button
-            id="themeToggle"
-            class="theme-toggle"
-            type="button"
-            role="switch"
-            aria-checked="false"
-            aria-label="Toggle color theme"
-            title="Toggle color theme"
-          >
-            <span class="theme-knob" aria-hidden="true"></span>
-          </button>
         </div>
       </div>
 
@@ -129,7 +118,10 @@
                   <span>Forecast Time</span>
                   <strong id="forecastTimeReadout">Loading valid times…</strong>
                 </div>
-                <input id="forecastTimeSlider" class="forecast-time-slider" type="range" min="0" max="0" value="0" step="1" disabled aria-label="Forecast time" />
+                <div class="forecast-timeline-track">
+                  <input id="forecastTimeSlider" class="forecast-time-slider" type="range" min="0" max="0" value="0" step="1" disabled aria-label="Forecast time" />
+                  <div id="forecastTimeNotches" class="forecast-time-notches" aria-hidden="true"></div>
+                </div>
                 <button id="forecastNextTime" class="time-step-btn" type="button" aria-label="Next forecast time">›</button>
               </div>
             </div>
@@ -224,6 +216,6 @@
   </footer>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="/static/app.js?v=20261102h"></script>
+  <script src="/static/app.js?v=20261102i"></script>
 </body>
 </html>

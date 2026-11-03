@@ -954,3 +954,158 @@ main .container{
 .site-label-tooltip.leaflet-tooltip-right::before{
   border-right-color:rgba(5,19,41,.94)!important;
 }
+
+
+/* Dark-only north-star refinement */
+.theme-toggle{display:none!important;}
+html,body{color-scheme:dark;}
+
+/* Forecast controls: individual floating pills, no enclosing capsule */
+.forecast-layer-rail{
+  left:50%;
+  right:auto;
+  width:auto;
+  max-width:calc(100% - 130px);
+  justify-content:center;
+  padding:0;
+  transform:translateX(-50%);
+  border:0;
+  border-radius:0;
+  background:transparent;
+  backdrop-filter:none;
+  box-shadow:none;
+}
+.forecast-layer-title{
+  flex-basis:100%;
+  margin:0 0 2px;
+  text-align:center;
+  color:rgba(224,246,255,.82);
+}
+.forecast-layer-btn{
+  background:rgba(7,28,55,.35);
+  border-color:rgba(126,220,255,.26);
+  backdrop-filter:blur(8px);
+  box-shadow:0 5px 16px rgba(0,0,0,.18);
+}
+.forecast-layer-btn:hover{
+  background:rgba(18,62,98,.48);
+}
+.forecast-layer-btn.active{
+  color:#effcff;
+  border-color:rgba(108,230,255,.78);
+  background:rgba(22,171,214,.35);
+  box-shadow:0 0 0 1px rgba(96,230,255,.10),0 6px 20px rgba(0,0,0,.24);
+}
+.map-status:empty{display:none;}
+
+/* Timeline with corporate interaction mechanics, SubReal visual treatment */
+.forecast-timeline-track{
+  position:relative;
+  min-width:0;
+  padding:0 3px 13px;
+}
+.forecast-time-slider{
+  position:relative;
+  z-index:2;
+  display:block;
+}
+.forecast-time-notches{
+  position:absolute;
+  left:10px;
+  right:10px;
+  bottom:0;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  pointer-events:none;
+}
+.forecast-time-notch{
+  width:1px;
+  height:5px;
+  background:rgba(171,215,240,.38);
+}
+.forecast-time-notch.major{
+  height:9px;
+  background:rgba(114,233,255,.72);
+}
+.forecast-time-notch.selected{
+  width:2px;
+  height:11px;
+  background:#8beeff;
+  box-shadow:0 0 8px rgba(92,224,255,.7);
+}
+
+/* Operational cards use the available vertical space */
+.ops-card{
+  display:flex;
+  min-height:250px;
+  flex-direction:column;
+}
+.ops-card-summary{
+  min-height:0;
+}
+.forecast-strip,
+.ops-list,
+.ops-metrics{
+  margin-top:auto;
+}
+.ops-metrics{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+}
+.ops-empty-state{
+  min-height:105px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  gap:7px;
+  padding:14px;
+  border:1px solid rgba(63,216,151,.18);
+  border-radius:12px;
+  background:linear-gradient(135deg,rgba(35,172,115,.10),rgba(8,31,54,.22));
+}
+.ops-empty-state strong{
+  color:#bdf7dc;
+  font-size:.82rem;
+}
+.ops-empty-state span{
+  color:#9fb9cb;
+  font-size:.72rem;
+  line-height:1.45;
+}
+
+/* Meaningful severity and power states */
+.hazards-card.severity-none{border-color:rgba(57,205,145,.22);}
+.hazards-card.severity-minor{border-color:rgba(222,205,80,.34);}
+.hazards-card.severity-moderate{border-color:rgba(255,175,52,.42);}
+.hazards-card.severity-severe{border-color:rgba(255,92,62,.48);}
+.hazards-card.severity-extreme{border-color:rgba(255,48,112,.62);box-shadow:0 0 32px rgba(255,48,112,.10);}
+.ops-status.severity-none,.ops-status.state-good{
+  color:#baf8dc;border:1px solid rgba(45,220,145,.22);background:rgba(31,184,119,.09);
+}
+.ops-status.severity-minor{
+  color:#fff1a8;border:1px solid rgba(219,204,72,.28);background:rgba(188,169,35,.10);
+}
+.ops-status.severity-moderate{
+  color:#ffe0a0;border:1px solid rgba(255,174,50,.34);background:rgba(255,143,25,.10);
+}
+.ops-status.severity-severe,.ops-status.state-outage{
+  color:#ffd0c4;border:1px solid rgba(255,91,61,.38);background:rgba(222,65,41,.11);
+}
+.ops-status.severity-extreme{
+  color:#ffd0df;border:1px solid rgba(255,48,112,.46);background:rgba(220,35,94,.13);
+}
+.ops-status.state-unknown{
+  color:#d8e1ec;border:1px solid rgba(158,175,194,.24);background:rgba(116,134,154,.10);
+}
+.power-card.power-normal{border-color:rgba(57,205,145,.20);}
+.power-card.power-outage{border-color:rgba(255,91,61,.42);}
+.power-card.power-unknown{border-color:rgba(158,175,194,.24);}
+
+@media (max-width:760px){
+  .forecast-layer-rail{
+    left:50%;
+    right:auto;
+    max-width:calc(100% - 80px);
+    border-radius:0;
+  }
+}

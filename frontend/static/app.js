@@ -200,7 +200,6 @@ const CLIENT_TIMEOUT_MS = 17000;
 
 const statusDot = $("statusDot");
 const statusText = $("statusText");
-const themeToggle = $("themeToggle");
 
 const headline = $("headline");
 const subhead = $("subhead");
@@ -210,6 +209,7 @@ const forecastMapEl = $("forecastMap");
 const mapStatus = $("mapStatus");
 const forecastTimeSlider = $("forecastTimeSlider");
 const forecastTimeReadout = $("forecastTimeReadout");
+const forecastTimeNotches = $("forecastTimeNotches");
 const forecastCurrentTime = $("forecastCurrentTime");
 const forecastPrevTime = $("forecastPrevTime");
 const forecastNextTime = $("forecastNextTime");
@@ -250,42 +250,8 @@ let currentSuggestions = [];
 let activeSuggestionIndex = -1;
 let suggestionAbortController = null;
 let suggestionDebounceTimer = null;
-const THEME_STORAGE_KEY = "subreal.weather-power.theme";
-
-function applyTheme(theme) {
-  const mode = theme === "dark" ? "dark" : "light";
-  document.documentElement.setAttribute("data-theme", mode);
-
-  if (themeToggle) {
-    const isDark = mode === "dark";
-    themeToggle.setAttribute("aria-checked", isDark ? "true" : "false");
-    themeToggle.setAttribute("title", isDark ? "Switch to light mode" : "Switch to dark mode");
-  }
-}
-
-function resolveInitialTheme() {
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
-
-  const prefersDark =
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches;
-  return prefersDark ? "dark" : "light";
-}
-
-function initThemeToggle() {
-  const initialTheme = resolveInitialTheme();
-  applyTheme(initialTheme);
-
-  if (themeToggle) {
-    themeToggle.addEventListener("click", () => {
-      const isDark = document.documentElement.getAttribute("data-theme") === "dark";
-      const nextTheme = isDark ? "light" : "dark";
-      applyTheme(nextTheme);
-      window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-    });
-  }
-}
+// Dark-only product mode for the current north-star phase.
+document.documentElement.setAttribute("data-theme", "dark");
 
 // --------------------
 // Formatting helpers
@@ -429,9 +395,7 @@ function renderOpsCards(data) {
   const cond = wx?.condition || periods[0]?.short_forecast || "Weather unavailable";
   const currentTemp = wx?.temperature_f;
 
-  if (opsCurrentWeatherIcon) {
-    opsCurrentWeatherIcon.src = meteoconUrl(cond, true);
-  }
+  if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = meteoconUrl(cond, true);
   if (opsForecastTitle) {
     opsForecastTitle.textContent = currentTemp !== null && currentTemp !== undefined
       ? `${currentTemp}°F • ${cond}`
@@ -465,45 +429,68 @@ function renderOpsCards(data) {
   }
 
   const alerts = Array.isArray(wx?.alerts) ? wx.alerts : [];
+  const severity = String(wx?.max_alert_severity || "none").toLowerCase();
+  const severityClass = ["minor", "moderate", "severe", "extreme"].includes(severity) ? severity : "none";
+  const hazardsCard = opsHazardStatus?.closest(".ops-card");
+  if (hazardsCard) {
+    hazardsCard.classList.remove("severity-none", "severity-minor", "severity-moderate", "severity-severe", "severity-extreme");
+    hazardsCard.classList.add(`severity-${severityClass}`);
+  }
   if (opsHazardTitle) {
     opsHazardTitle.textContent = alerts.length ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}` : "No active alerts";
   }
   if (opsHazardStatus) {
-    opsHazardStatus.className = "ops-status " + (alerts.length ? "warn" : "good");
+    opsHazardStatus.className = `ops-status severity-${severityClass}`;
     opsHazardStatus.textContent = alerts.length
-      ? `Highest severity: ${wx?.max_alert_severity || "unknown"}`
+      ? `Highest severity: ${severityClass}`
       : "No active NWS alerts for the selected location.";
   }
   if (opsHazardList) {
     opsHazardList.innerHTML = "";
-    alerts.slice(0, 3).forEach((alert) => {
-      const row = document.createElement("div");
-      row.className = "ops-list-row";
-      const event = document.createElement("strong");
-      event.textContent = alert?.event || "Weather alert";
-      const detail = document.createElement("span");
-      detail.textContent = alert?.severity ? String(alert.severity) : "Active";
-      row.append(event, detail);
-      opsHazardList.appendChild(row);
-    });
+    if (!alerts.length) {
+      const calm = document.createElement("div");
+      calm.className = "ops-empty-state";
+      calm.innerHTML = "<strong>Operational weather risk: Low</strong><span>No active advisories, watches, or warnings are affecting this selected point.</span>";
+      opsHazardList.appendChild(calm);
+    } else {
+      alerts.slice(0, 4).forEach((alert) => {
+        const row = document.createElement("div");
+        row.className = "ops-list-row";
+        const event = document.createElement("strong");
+        event.textContent = alert?.event || "Weather alert";
+        const detail = document.createElement("span");
+        detail.textContent = alert?.severity ? String(alert.severity) : "Active";
+        row.append(event, detail);
+        opsHazardList.appendChild(row);
+      });
+    }
   }
 
   const utility = data?.provider?.name || data?.provider?.utility || data?.resolved?.utility || "Utility";
   const outageNearby = !!data?.power?.has_outage_nearby;
   const nearest = data?.power?.nearest || {};
+  const powerOk = data?.power?.meta?.ok !== false;
+  const powerCard = opsPowerStatus?.closest(".ops-card");
+  if (powerCard) {
+    powerCard.classList.remove("power-normal", "power-outage", "power-unknown");
+    powerCard.classList.add(!powerOk ? "power-unknown" : outageNearby ? "power-outage" : "power-normal");
+  }
   if (opsPowerTitle) opsPowerTitle.textContent = utility;
   if (opsPowerStatus) {
-    opsPowerStatus.className = "ops-status " + (outageNearby ? "warn" : "good");
-    opsPowerStatus.textContent = outageNearby
-      ? "Nearby outage detected"
-      : "No nearby outage detected";
+    opsPowerStatus.className = "ops-status " + (!powerOk ? "state-unknown" : outageNearby ? "state-outage" : "state-good");
+    opsPowerStatus.textContent = !powerOk
+      ? "Live power status unavailable"
+      : outageNearby
+        ? "Nearby outage detected"
+        : "No nearby outage detected";
   }
   if (opsPowerMeta) {
     opsPowerMeta.innerHTML = "";
     const metrics = [
       ["Provider", data?.provider?.platform || "—"],
-      ["Customers out", nearest?.customers_out ?? "—"],
+      ["Customers out", nearest?.customers_out ?? (outageNearby ? "Unknown" : "0")],
       ["Distance", Number.isFinite(Number(nearest?.distance_miles)) ? `${Number(nearest.distance_miles).toFixed(2)} mi` : "—"],
+      ["Operational state", !powerOk ? "Check source" : outageNearby ? "Monitor" : "Normal"],
     ];
     metrics.forEach(([label, value]) => {
       const metric = document.createElement("div");
@@ -971,7 +958,7 @@ function initForecastMap() {
 
   if (forecastTimeSlider) {
     forecastTimeSlider.addEventListener("input", () => {
-      selectedForecastTimeIndex = Number(forecastTimeSlider.value) || 0;
+      selectedForecastTimeIndex = Math.max(currentForecastTimeIndex, Number(forecastTimeSlider.value) || currentForecastTimeIndex);
       updateForecastTimeControls();
       refreshForecastOverlay();
     });
@@ -985,7 +972,7 @@ function initForecastMap() {
   }
   if (forecastPrevTime) {
     forecastPrevTime.addEventListener("click", () => {
-      selectedForecastTimeIndex = Math.max(0, selectedForecastTimeIndex - 1);
+      selectedForecastTimeIndex = Math.max(currentForecastTimeIndex, selectedForecastTimeIndex - 1);
       updateForecastTimeControls();
       refreshForecastOverlay();
     });
@@ -1058,7 +1045,7 @@ function refreshForecastOverlay() {
 
     forecastWmsLayer.on("load", () => {
       if (mapStatus) {
-        mapStatus.textContent = `NDFD ${labels[activeForecastLayer] || activeForecastLayer} loaded`;
+        mapStatus.textContent = "";
       }
     });
     forecastWmsLayer.on("error", () => {
@@ -1073,25 +1060,38 @@ function refreshForecastOverlay() {
 function findCurrentForecastTimeIndex(times) {
   if (!Array.isArray(times) || !times.length) return 0;
   const now = Date.now();
-  let bestIndex = 0;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  times.forEach((value, index) => {
-    const timestamp = Date.parse(value);
-    if (!Number.isFinite(timestamp)) return;
-    const distance = Math.abs(timestamp - now);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestIndex = index;
-    }
+  for (let index = 0; index < times.length; index += 1) {
+    const timestamp = Date.parse(times[index]);
+    if (Number.isFinite(timestamp) && timestamp >= now) return index;
+  }
+  return Math.max(0, times.length - 1);
+}
+
+function renderForecastTimeNotches() {
+  if (!forecastTimeNotches) return;
+  forecastTimeNotches.innerHTML = "";
+  const futureTimes = forecastTimes.slice(currentForecastTimeIndex);
+  futureTimes.forEach((value, offset) => {
+    const notch = document.createElement("span");
+    notch.className = "forecast-time-notch";
+    const absoluteIndex = currentForecastTimeIndex + offset;
+    const isSelected = absoluteIndex === selectedForecastTimeIndex;
+    const isMajor = offset === 0 || offset === futureTimes.length - 1 || offset % 4 === 0;
+    notch.classList.toggle("selected", isSelected);
+    notch.classList.toggle("major", isMajor);
+    notch.title = formatIsoLocal(value) || String(value);
+    forecastTimeNotches.appendChild(notch);
   });
-  return bestIndex;
 }
 
 function updateForecastTimeControls() {
   if (!forecastTimeSlider || !forecastTimeReadout) return;
   const hasTimes = forecastTimes.length > 0;
+  if (hasTimes) {
+    selectedForecastTimeIndex = Math.max(currentForecastTimeIndex, Math.min(selectedForecastTimeIndex, forecastTimes.length - 1));
+  }
   forecastTimeSlider.disabled = !hasTimes;
-  forecastTimeSlider.min = "0";
+  forecastTimeSlider.min = hasTimes ? String(currentForecastTimeIndex) : "0";
   forecastTimeSlider.max = hasTimes ? String(forecastTimes.length - 1) : "0";
   forecastTimeSlider.value = hasTimes ? String(selectedForecastTimeIndex) : "0";
   const selected = hasTimes ? forecastTimes[selectedForecastTimeIndex] : null;
@@ -1105,8 +1105,9 @@ function updateForecastTimeControls() {
     forecastCurrentTime.classList.toggle("active", isCurrent);
     forecastCurrentTime.setAttribute("aria-pressed", isCurrent ? "true" : "false");
   }
-  if (forecastPrevTime) forecastPrevTime.disabled = !hasTimes || selectedForecastTimeIndex <= 0;
+  if (forecastPrevTime) forecastPrevTime.disabled = !hasTimes || selectedForecastTimeIndex <= currentForecastTimeIndex;
   if (forecastNextTime) forecastNextTime.disabled = !hasTimes || selectedForecastTimeIndex >= forecastTimes.length - 1;
+  renderForecastTimeNotches();
 }
 
 async function loadForecastTimes(layerKey) {
@@ -1736,7 +1737,6 @@ if (openNwsMap) {
 }
 
 // Initial state
-initThemeToggle();
 initForecastMap();
 clearPanels();
 setStatus("ok", "Idle");
