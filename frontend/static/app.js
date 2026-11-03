@@ -1748,12 +1748,21 @@ function initForecastMap() {
     return;
   }
 
+  // Keep the operational map focused on the contiguous United States.
+  // WMS imagery still uses the live viewport BBOX inside this navigation envelope.
+  const conusBounds = window.L.latLngBounds(
+    [24.0, -125.0],
+    [50.0, -66.0]
+  );
+
   forecastMap = window.L.map(forecastMapEl, {
     zoomControl: false,
     attributionControl: true,
     minZoom: 3,
     maxZoom: 18,
-  }).setView([37.5, -96.5], 4);
+    maxBounds: conusBounds,
+    maxBoundsViscosity: 1.0,
+  }).fitBounds(conusBounds, { padding: [12, 12] });
 
   window.L.control.zoom({ position: "bottomright" }).addTo(forecastMap);
   forecastMap.attributionControl.setPosition("bottomleft");
