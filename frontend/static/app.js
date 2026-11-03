@@ -1716,7 +1716,7 @@ async function renderDynamicHazardLegend(bbox, width, height, vtit) {
     } else if (!items.length) {
       const note = document.createElement("span");
       note.className = "forecast-hazard-legend-note";
-      note.textContent = "No legend categories are visible in this map view.";
+      note.textContent = "Hazard legend unavailable for this map view.";
       wrap.appendChild(note);
     } else {
       items.forEach((item) => wrap.appendChild(legendSwatch(item.label, item.color)));

@@ -242,13 +242,16 @@ def test_hazard_legend_uses_viewport_raster_and_source_colors(monkeypatch):
     monkeypatch.setattr(api_mod, "limited_requests_get", fake_get)
     monkeypatch.setattr(
         api_mod,
-        "_load_ndfd_wwa_color_map",
-        lambda: {"#FF0000": "Tornado Warning"},
+        "_load_ndfd_rgb_label_maps",
+        lambda: [
+            {"#00CE00": "Rain likely", "#C6FFAD": "Rain chance"},
+            {"#FF0000": "Tornado Warning", "#7B68EE": "Winter Weather Advisory"},
+        ],
     )
     monkeypatch.setattr(
         api_mod,
         "_hazard_items_from_png",
-        lambda content, color_map: [
+        lambda content, color_maps: [
             {"label": "Tornado Warning", "color": "#FF0000", "pixels": 42}
         ],
     )
@@ -291,19 +294,44 @@ def test_temperature_legend_falls_back_to_noaa_temp_alias(monkeypatch):
 
 
 
-def test_named_rgb_label_map_prefers_hazard_section():
+def test_collect_rgb_label_maps_finds_nested_tables():
     payload = {
         "wx": {
             "0 206 0": "Rain likely",
             "198 255 173": "Rain chance",
         },
-        "wwa_colormap": {
-            "255 0 0": "Tornado Warning",
-            "255 105 180": "Winter Storm Warning",
-            "123 104 238": "Winter Weather Advisory",
+        "legends": {
+            "hazards": {
+                "255 0 0": "Tornado Warning",
+                "255 105 180": "Winter Storm Warning",
+                "123 104 238": "Winter Weather Advisory",
+            }
         },
     }
-    colors = api_mod._named_rgb_label_map(payload, "wwa")
-    assert colors["#FF0000"] == "Tornado Warning"
-    assert colors["#FF69B4"] == "Winter Storm Warning"
-    assert "#00CE00" not in colors
+    candidates = api_mod._collect_rgb_label_maps(payload)
+    assert any(candidate.get("#00CE00") == "Rain likely" for candidate in candidates)
+    assert any(candidate.get("#FF0000") == "Tornado Warning" for candidate in candidates)
+
+
+def test_best_rgb_label_map_scores_against_actual_raster(monkeypatch):
+    candidates = [
+        {"#00CE00": "Rain likely", "#C6FFAD": "Rain chance"},
+        {
+            "#FF0000": "Tornado Warning",
+            "#7B68EE": "Winter Weather Advisory",
+            "#D8BFD8": "Small Craft Advisory",
+        },
+    ]
+    monkeypatch.setattr(
+        api_mod,
+        "_png_color_counts",
+        lambda content: {
+            "#7B68EE": 1200,
+            "#D8BFD8": 900,
+            "#57D9D4": 150,
+        },
+    )
+    color_map, raster_colors = api_mod._best_rgb_label_map_for_png(b"png", candidates)
+    assert color_map["#7B68EE"] == "Winter Weather Advisory"
+    assert color_map["#D8BFD8"] == "Small Craft Advisory"
+    assert raster_colors["#57D9D4"] == 150
