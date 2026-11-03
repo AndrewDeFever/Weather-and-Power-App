@@ -246,6 +246,9 @@ const openOutageMap = $("openOutageMap");
 const openNwsMap = $("openNwsMap");
 
 let lastPayload = null;
+let ndfdHazardSeries = [];
+let ndfdHazardError = null;
+let ndfdHazardLocationKey = null;
 let currentSuggestions = [];
 let activeSuggestionIndex = -1;
 let suggestionAbortController = null;
@@ -385,6 +388,136 @@ function meteoconSlug(condition, isDaytime = true) {
   return day ? "partly-cloudy-day" : "partly-cloudy-night";
 }
 
+function ndfdHazardClass(hazards) {
+  const significance = (Array.isArray(hazards) ? hazards : [])
+    .map((hazard) => String(hazard?.significance || "").toLowerCase());
+  if (significance.some((value) => value.includes("warning"))) return "severe";
+  if (significance.some((value) => value.includes("watch"))) return "moderate";
+  if (significance.some((value) => value.includes("advisory"))) return "minor";
+  return hazards?.length ? "minor" : "none";
+}
+
+function selectedForecastHazardPeriod() {
+  const selected = forecastTimes[selectedForecastTimeIndex] || null;
+  if (!selected || !Array.isArray(ndfdHazardSeries) || !ndfdHazardSeries.length) return null;
+  const selectedMs = Date.parse(selected);
+  if (!Number.isFinite(selectedMs)) return null;
+
+  let fallback = null;
+  for (const period of ndfdHazardSeries) {
+    const startMs = Date.parse(period?.start_time || "");
+    const endMs = Date.parse(period?.end_time || "");
+    if (!Number.isFinite(startMs)) continue;
+    if (startMs <= selectedMs) fallback = period;
+    if (Number.isFinite(endMs) && selectedMs >= startMs && selectedMs < endMs) return period;
+    if (!Number.isFinite(endMs) && startMs === selectedMs) return period;
+  }
+  return fallback;
+}
+
+function renderHazardCard() {
+  if (!opsHazardTitle || !opsHazardStatus || !opsHazardList) return;
+  const currentAlerts = Array.isArray(lastPayload?.weather?.alerts) ? lastPayload.weather.alerts : [];
+  const selectedTime = forecastTimes[selectedForecastTimeIndex] || null;
+  const period = selectedForecastHazardPeriod();
+  const forecastHazards = Array.isArray(period?.hazards) ? period.hazards : [];
+  const forecastClass = ndfdHazardClass(forecastHazards);
+  const hazardsCard = opsHazardStatus.closest(".ops-card");
+
+  if (hazardsCard) {
+    hazardsCard.classList.remove("severity-none", "severity-minor", "severity-moderate", "severity-severe", "severity-extreme");
+    hazardsCard.classList.add(`severity-${forecastClass}`);
+  }
+
+  opsHazardList.innerHTML = "";
+
+  if (ndfdHazardError) {
+    opsHazardTitle.textContent = "Forecast hazard data unavailable";
+    opsHazardStatus.className = "ops-status state-unknown";
+    opsHazardStatus.textContent = ndfdHazardError;
+  } else if (!ndfdHazardLocationKey) {
+    opsHazardTitle.textContent = "No location selected";
+    opsHazardStatus.className = "ops-status severity-none";
+    opsHazardStatus.textContent = "Select a site to load NDFD forecast hazards.";
+  } else if (!selectedTime) {
+    opsHazardTitle.textContent = "Forecast time unavailable";
+    opsHazardStatus.className = "ops-status state-unknown";
+    opsHazardStatus.textContent = "NDFD hazard timing is not available for this layer.";
+  } else if (forecastHazards.length) {
+    opsHazardTitle.textContent = forecastHazards.length === 1
+      ? `${forecastHazards[0]?.phenomena || "Forecast hazard"} ${forecastHazards[0]?.significance || ""}`.trim()
+      : `${forecastHazards.length} forecast hazards`;
+    opsHazardStatus.className = `ops-status severity-${forecastClass}`;
+    opsHazardStatus.textContent = `NDFD valid ${formatIsoLocal(selectedTime) || selectedTime}`;
+
+    forecastHazards.slice(0, 4).forEach((hazard) => {
+      const row = document.createElement("div");
+      row.className = "ops-list-row";
+      const event = document.createElement("strong");
+      event.textContent = [hazard?.phenomena, hazard?.significance].filter(Boolean).join(" ") || "Forecast hazard";
+      const detail = document.createElement("span");
+      detail.textContent = hazard?.code || "NDFD";
+      row.append(event, detail);
+      opsHazardList.appendChild(row);
+    });
+  } else {
+    opsHazardTitle.textContent = "No NDFD hazard forecast";
+    opsHazardStatus.className = "ops-status severity-none";
+    opsHazardStatus.textContent = `No long-duration NDFD hazard at ${formatIsoLocal(selectedTime) || selectedTime}`;
+  }
+
+  const nwsRow = document.createElement("div");
+  nwsRow.className = "ops-secondary-state";
+  const nwsLabel = document.createElement("strong");
+  nwsLabel.textContent = "Active now · NWS";
+  const nwsValue = document.createElement("span");
+  if (currentAlerts.length) {
+    const names = currentAlerts.slice(0, 2).map((alert) => alert?.event).filter(Boolean).join(", ");
+    nwsValue.textContent = `${currentAlerts.length} active · ${names || "Alert in effect"}`;
+    nwsRow.classList.add("active");
+  } else {
+    nwsValue.textContent = "No active alerts";
+  }
+  nwsRow.append(nwsLabel, nwsValue);
+  opsHazardList.appendChild(nwsRow);
+}
+
+async function loadNdfdHazards(latValue, lonValue) {
+  const lat = Number(latValue);
+  const lon = Number(lonValue);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+  const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+  if (ndfdHazardLocationKey === key && ndfdHazardSeries.length && !ndfdHazardError) {
+    renderHazardCard();
+    return;
+  }
+
+  ndfdHazardLocationKey = key;
+  ndfdHazardSeries = [];
+  ndfdHazardError = null;
+  if (opsHazardTitle) opsHazardTitle.textContent = "Loading NDFD forecast hazards…";
+  if (opsHazardStatus) {
+    opsHazardStatus.className = "ops-status severity-none";
+    opsHazardStatus.textContent = "Fetching long-duration hazard guidance for this point.";
+  }
+
+  try {
+    const response = await fetch(
+      `/api/forecast/point-hazards?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`,
+      { headers: { Accept: "application/json" } }
+    );
+    if (!response.ok) throw new Error(`Forecast hazards failed (${response.status})`);
+    const payload = await response.json();
+    if (payload?.error) throw new Error(String(payload.error));
+    ndfdHazardSeries = Array.isArray(payload?.periods) ? payload.periods : [];
+  } catch (error) {
+    ndfdHazardError = "NDFD forecast hazards unavailable";
+    console.error(error);
+  }
+  renderHazardCard();
+}
+
 function meteoconUrl(condition, isDaytime = true) {
   return `${WEATHER_ICON_BASE}${encodeURIComponent(meteoconSlug(condition, isDaytime))}.svg`;
 }
@@ -428,43 +561,7 @@ function renderOpsCards(data) {
     });
   }
 
-  const alerts = Array.isArray(wx?.alerts) ? wx.alerts : [];
-  const severity = String(wx?.max_alert_severity || "none").toLowerCase();
-  const severityClass = ["minor", "moderate", "severe", "extreme"].includes(severity) ? severity : "none";
-  const hazardsCard = opsHazardStatus?.closest(".ops-card");
-  if (hazardsCard) {
-    hazardsCard.classList.remove("severity-none", "severity-minor", "severity-moderate", "severity-severe", "severity-extreme");
-    hazardsCard.classList.add(`severity-${severityClass}`);
-  }
-  if (opsHazardTitle) {
-    opsHazardTitle.textContent = alerts.length ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}` : "No active alerts";
-  }
-  if (opsHazardStatus) {
-    opsHazardStatus.className = `ops-status severity-${severityClass}`;
-    opsHazardStatus.textContent = alerts.length
-      ? `Highest severity: ${severityClass}`
-      : "No active NWS alerts at the selected point.";
-  }
-  if (opsHazardList) {
-    opsHazardList.innerHTML = "";
-    if (!alerts.length) {
-      const calm = document.createElement("div");
-      calm.className = "ops-empty-state";
-      calm.innerHTML = "<strong>No active alert polygon at this point</strong><span>NDFD forecast shading on the map is forecast guidance and can still show impactful weather even when no active NWS alert is in effect here.</span>";
-      opsHazardList.appendChild(calm);
-    } else {
-      alerts.slice(0, 4).forEach((alert) => {
-        const row = document.createElement("div");
-        row.className = "ops-list-row";
-        const event = document.createElement("strong");
-        event.textContent = alert?.event || "Weather alert";
-        const detail = document.createElement("span");
-        detail.textContent = alert?.severity ? String(alert.severity) : "Active";
-        row.append(event, detail);
-        opsHazardList.appendChild(row);
-      });
-    }
-  }
+  renderHazardCard();
 
   const utility = data?.provider?.name || data?.provider?.utility || data?.resolved?.utility || "Utility";
   const outageNearby = !!data?.power?.has_outage_nearby;
@@ -845,6 +942,9 @@ function clearPanels() {
   if (opsForecastSummary) opsForecastSummary.textContent = "Search a site to load forecast context.";
   if (opsForecastStrip) opsForecastStrip.innerHTML = "";
   if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = `${WEATHER_ICON_BASE}partly-cloudy-day.svg`;
+  ndfdHazardSeries = [];
+  ndfdHazardError = null;
+  ndfdHazardLocationKey = null;
   if (opsHazardTitle) opsHazardTitle.textContent = "No location selected";
   if (opsHazardStatus) {
     opsHazardStatus.className = "ops-status good";
@@ -1108,6 +1208,7 @@ function updateForecastTimeControls() {
   if (forecastPrevTime) forecastPrevTime.disabled = !hasTimes || selectedForecastTimeIndex <= currentForecastTimeIndex;
   if (forecastNextTime) forecastNextTime.disabled = !hasTimes || selectedForecastTimeIndex >= forecastTimes.length - 1;
   renderForecastTimeNotches();
+  renderHazardCard();
 }
 
 async function loadForecastTimes(layerKey) {
@@ -1263,6 +1364,7 @@ async function executeSearch(value) {
     lastPayload = data;
 
     render(value, data);
+    void loadNdfdHazards(data?.resolved?.lat, data?.resolved?.lon);
     setStatus("ok", "OK");
   } catch (err) {
     console.error(err);
