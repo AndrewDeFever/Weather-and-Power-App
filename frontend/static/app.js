@@ -226,6 +226,8 @@ const opsPowerTitle = $("opsPowerTitle");
 const opsPowerStatus = $("opsPowerStatus");
 const opsPowerMeta = $("opsPowerMeta");
 const opsPowerSiteMeta = $("opsPowerSiteMeta");
+const opsOpenGoogleMaps = $("opsOpenGoogleMaps");
+const opsOpenOutageMap = $("opsOpenOutageMap");
 
 const c_loc = $("c_loc");
 const c_loc_meta = $("c_loc_meta");
@@ -725,11 +727,14 @@ function renderOpsCards(data) {
   }
   if (opsPowerMeta) {
     opsPowerMeta.innerHTML = "";
+    const etrRaw = nearest?.etr;
+    const etrFormatted = outageNearby
+      ? (etrRaw ? (formatIsoLocal(etrRaw) || String(etrRaw)) : "Not provided")
+      : "Not applicable";
     const metrics = [
       ["Customers out", nearest?.customers_out ?? (outageNearby ? "Unknown" : "0")],
       ["Distance", Number.isFinite(Number(nearest?.distance_miles)) ? `${Number(nearest.distance_miles).toFixed(2)} mi` : "—"],
-      ["Provider", data?.provider?.platform || "—"],
-      ["Operational state", !powerOk ? "Check source" : outageNearby ? "Monitor" : "Normal"],
+      ["ETR", etrFormatted],
     ];
     metrics.forEach(([label, value]) => {
       const metric = document.createElement("div");
@@ -758,6 +763,11 @@ function renderOpsCards(data) {
     meta.textContent = [locality, coords].filter(Boolean).join(" · ");
     opsPowerSiteMeta.append(name, meta);
   }
+
+  const hasSiteCoords = Number.isFinite(Number(data?.resolved?.lat)) && Number.isFinite(Number(data?.resolved?.lon));
+  const outageMapUrl = safeUrl(data?.provider?.outage_map);
+  if (opsOpenGoogleMaps) opsOpenGoogleMaps.disabled = !hasSiteCoords;
+  if (opsOpenOutageMap) opsOpenOutageMap.disabled = !outageMapUrl;
 }
 
 function safeUrl(url) {
@@ -1121,6 +1131,8 @@ function clearPanels() {
   }
   if (opsPowerMeta) opsPowerMeta.innerHTML = "";
   if (opsPowerSiteMeta) opsPowerSiteMeta.innerHTML = "";
+  if (opsOpenGoogleMaps) opsOpenGoogleMaps.disabled = true;
+  if (opsOpenOutageMap) opsOpenOutageMap.disabled = true;
 
   if (mapIntelTitle) mapIntelTitle.textContent = "No location selected";
   if (mapIntelMeta) {
@@ -1960,6 +1972,13 @@ q.addEventListener("blur", () => {
   const check = validateQueryInput(q.value);
   if (check.ok) q.value = check.normalized;
 });
+
+if (opsOpenGoogleMaps) {
+  opsOpenGoogleMaps.addEventListener("click", () => openGoogleMaps.click());
+}
+if (opsOpenOutageMap) {
+  opsOpenOutageMap.addEventListener("click", () => openOutageMap.click());
+}
 
 openGoogleMaps.addEventListener("click", () => {
   if (!lastPayload) return;

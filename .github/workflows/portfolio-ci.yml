@@ -82,6 +82,19 @@ jobs:
           grep -q 'LIVE · NOW' frontend/index.html
           grep -q 'id="opsWeatherMetrics"' frontend/index.html
           grep -q 'id="opsPowerSiteMeta"' frontend/index.html
+          grep -q 'id="opsOpenGoogleMaps"' frontend/index.html
+          grep -q 'id="opsOpenOutageMap"' frontend/index.html
+          grep -q 'Open Site in Google Maps' frontend/index.html
+          grep -q 'Open Utility Outage Map' frontend/index.html
+          grep -q '\["ETR", etrFormatted\]' frontend/static/app.js
+          if grep -q '\["Provider",' frontend/static/app.js; then
+            echo "Provider plumbing must not return to the visible power metrics."
+            exit 1
+          fi
+          if grep -q '\["Operational state",' frontend/static/app.js; then
+            echo "Derived operational state must not return to the visible power metrics."
+            exit 1
+          fi
           grep -q 'operationalInsightsForPeriod' frontend/static/app.js
           if grep -q 'workspace-heading' frontend/index.html; then
             echo "Pre-map headline block must stay removed."
