@@ -1551,3 +1551,69 @@ main .container{
     max-height:none;
   }
 }
+
+
+/* Weather Impacts: compact ranked impact brief */
+.hazards-card{
+  min-height:0;
+  align-self:start;
+}
+.hazards-card .ops-list{
+  margin-top:14px;
+  display:flex;
+  flex-direction:column;
+  gap:0;
+  border-top:1px solid rgba(92,162,218,.14);
+}
+.impact-brief-row{
+  position:relative;
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  padding:13px 10px 13px 16px;
+  border-bottom:1px solid rgba(92,162,218,.12);
+}
+.impact-brief-row::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:13px;
+  bottom:13px;
+  width:3px;
+  border-radius:999px;
+  background:#49c8ee;
+  opacity:.75;
+}
+.impact-brief-row.minor::before{background:#d9c94d;}
+.impact-brief-row.elevated::before,
+.impact-brief-row.moderate::before{background:#ffb03f;}
+.impact-brief-row.high::before,
+.impact-brief-row.severe::before{background:#ff684f;}
+.impact-brief-row.extreme::before{background:#ff3070;}
+.impact-brief-row.active-official{
+  margin:8px 0;
+  border:1px solid rgba(255,163,54,.28);
+  border-radius:10px;
+  background:rgba(190,91,17,.08);
+}
+.impact-brief-copy{
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  min-width:0;
+}
+.impact-brief-copy strong{
+  color:#f4f9ff;
+  font-size:.82rem;
+  line-height:1.25;
+}
+.impact-brief-copy span{
+  color:#9eb7ca;
+  font-size:.69rem;
+  line-height:1.4;
+}
+.active-alert-block,
+.forecast-outlook-block,
+.hazards-card .ops-insight{
+  display:none!important;
+}

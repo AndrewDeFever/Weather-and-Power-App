@@ -410,16 +410,14 @@ function selectedForecastHazardPeriod() {
   const selectedMs = Date.parse(selected);
   if (!Number.isFinite(selectedMs)) return null;
 
-  let fallback = null;
   for (const period of ndfdHazardSeries) {
     const startMs = Date.parse(period?.start_time || "");
     const endMs = Date.parse(period?.end_time || "");
     if (!Number.isFinite(startMs)) continue;
-    if (startMs <= selectedMs) fallback = period;
     if (Number.isFinite(endMs) && selectedMs >= startMs && selectedMs < endMs) return period;
     if (!Number.isFinite(endMs) && startMs === selectedMs) return period;
   }
-  return fallback;
+  return null;
 }
 
 function renderHazardCard() {
@@ -432,92 +430,111 @@ function renderHazardCard() {
   const forecastClass = ndfdHazardClass(forecastHazards);
   const activeSeverity = String(lastPayload?.weather?.max_alert_severity || "").toLowerCase();
   const hasActiveAlert = currentAlerts.length > 0;
+  const insights = operationalInsightsForPeriod(selectedWeatherPeriod());
   const hazardsCard = opsHazardStatus.closest(".ops-card");
 
-  if (hazardsCard) {
-    hazardsCard.classList.remove("severity-none", "severity-minor", "severity-moderate", "severity-severe", "severity-extreme");
-    hazardsCard.classList.add(hasActiveAlert ? `severity-${["minor","moderate","severe","extreme"].includes(activeSeverity) ? activeSeverity : "moderate"}` : `severity-${forecastClass}`);
-  }
-
-  opsHazardList.innerHTML = "";
-
-  // 1) Active alert: always gets top priority.
-  const alertBlock = document.createElement("div");
-  alertBlock.className = hasActiveAlert ? "active-alert-block active" : "active-alert-block";
-  const alertKicker = document.createElement("span");
-  alertKicker.className = "impact-section-kicker";
-  alertKicker.textContent = "Active Alert";
-  const alertTitle = document.createElement("strong");
-  const alertMeta = document.createElement("span");
+  const severityRank = { info: 0, minor: 1, elevated: 2, moderate: 2, high: 3, severe: 3, extreme: 4 };
+  const rows = [];
 
   if (hasActiveAlert) {
     const primary = currentAlerts[0] || {};
-    alertTitle.textContent = primary?.event || "Alert in effect";
     const expires = primary?.expires ? formatIsoLocal(primary.expires) : null;
-    alertMeta.textContent = expires ? `In effect until ${expires}` : "Currently in effect";
-  } else {
-    alertTitle.textContent = "No active alerts";
-    alertMeta.textContent = "No current alert is in effect at this location.";
-  }
-  alertBlock.append(alertKicker, alertTitle, alertMeta);
-  opsHazardList.appendChild(alertBlock);
-
-  // 2) Forecast outlook for selected time.
-  const outlook = document.createElement("div");
-  outlook.className = "forecast-outlook-block";
-  const outlookKicker = document.createElement("span");
-  outlookKicker.className = "impact-section-kicker";
-  outlookKicker.textContent = "Forecast Outlook";
-  const outlookTitle = document.createElement("strong");
-  const outlookMeta = document.createElement("span");
-
-  if (ndfdHazardError) {
-    outlookTitle.textContent = "Forecast hazard data unavailable";
-    outlookMeta.textContent = "Forecast hazard guidance could not be loaded.";
-  } else if (!ndfdHazardLocationKey || !selectedTime) {
-    outlookTitle.textContent = "Select a location and forecast time";
-    outlookMeta.textContent = "Forecast impacts will appear here.";
-  } else if (forecastHazards.length) {
-    outlookTitle.textContent = forecastHazards.length === 1
-      ? [forecastHazards[0]?.phenomena, forecastHazards[0]?.significance].filter(Boolean).join(" ") || "Forecast hazard"
-      : `${forecastHazards.length} forecast hazards`;
-    outlookMeta.textContent = `Forecast valid ${formatIsoLocal(selectedTime) || selectedTime}`;
-  } else {
-    outlookTitle.textContent = "No forecast hazards expected";
-    outlookMeta.textContent = `For ${formatIsoLocal(selectedTime) || selectedTime}`;
-  }
-  outlook.append(outlookKicker, outlookTitle, outlookMeta);
-  opsHazardList.appendChild(outlook);
-
-  // 3) Derived operational insights.
-  const insights = operationalInsightsForPeriod(selectedWeatherPeriod());
-  if (insights.length) {
-    insights.forEach((insight) => {
-      const row = document.createElement("div");
-      row.className = `ops-insight ${insight.level || "info"}`;
-      const title = document.createElement("strong");
-      title.textContent = insight.title;
-      const text = document.createElement("span");
-      text.textContent = insight.text;
-      row.append(title, text);
-      opsHazardList.appendChild(row);
+    const level = ["minor", "moderate", "severe", "extreme"].includes(activeSeverity) ? activeSeverity : "moderate";
+    rows.push({
+      level,
+      priority: 100 + (severityRank[level] || 0),
+      title: primary?.event || "Weather alert in effect",
+      detail: expires ? `In effect until ${expires}` : "Currently in effect",
+      official: true,
     });
-  } else {
-    const calm = document.createElement("div");
-    calm.className = "ops-insight info";
-    const title = document.createElement("strong");
-    title.textContent = "Operational insight";
-    const text = document.createElement("span");
-    text.textContent = "No additional weather-driven operational concerns stand out for the selected forecast period.";
-    calm.append(title, text);
-    opsHazardList.appendChild(calm);
   }
 
+  forecastHazards.slice(0, 2).forEach((hazard) => {
+    rows.push({
+      level: forecastClass === "none" ? "minor" : forecastClass,
+      priority: 70 + (severityRank[forecastClass] || 0),
+      title: [hazard?.phenomena, hazard?.significance].filter(Boolean).join(" ") || "Forecast hazard",
+      detail: selectedTime ? `Expected around ${formatIsoLocal(selectedTime) || selectedTime}` : "Forecast hazard expected",
+      official: true,
+    });
+  });
+
+  insights.forEach((insight) => {
+    let title = String(insight.title || "Weather concern").replace(/^Operational insight\s*·\s*/i, "").trim();
+    if (/^Severe storms$/i.test(title)) title = "Severe storms possible";
+    if (/^Rain chance$/i.test(title)) {
+      const precip = Number(selectedWeatherPeriod()?.precip_probability);
+      title = Number.isFinite(precip) ? `${Math.round(precip)}% chance of rain` : "Elevated rain chance";
+    }
+    rows.push({
+      level: insight.level || "info",
+      priority: 50 + (severityRank[insight.level] || 0),
+      title,
+      detail: insight.text || "",
+      official: false,
+    });
+  });
+
+  if (!hasActiveAlert) {
+    rows.push({ level: "info", priority: 10, title: "No active alerts", detail: "", official: true });
+  }
+
+  if (!ndfdHazardError && ndfdHazardLocationKey && selectedTime && !forecastHazards.length) {
+    rows.push({
+      level: "info",
+      priority: 5,
+      title: "No additional forecast hazards expected",
+      detail: `At ${formatIsoLocal(selectedTime) || selectedTime}`,
+      official: true,
+    });
+  } else if (ndfdHazardError) {
+    rows.push({
+      level: "info",
+      priority: 5,
+      title: "Forecast hazard data unavailable",
+      detail: "Current alerts and weather conditions are still shown.",
+      official: true,
+    });
+  }
+
+  rows.sort((a, b) => b.priority - a.priority);
+  opsHazardList.innerHTML = "";
+
+  rows.slice(0, 5).forEach((item) => {
+    const row = document.createElement("div");
+    row.className = `impact-brief-row ${item.level || "info"}${item.official && item.priority >= 100 ? " active-official" : ""}`;
+
+    const body = document.createElement("div");
+    body.className = "impact-brief-copy";
+    const title = document.createElement("strong");
+    title.textContent = item.title;
+    body.appendChild(title);
+
+    if (item.detail) {
+      const detail = document.createElement("span");
+      detail.textContent = item.detail;
+      body.appendChild(detail);
+    }
+
+    row.appendChild(body);
+    opsHazardList.appendChild(row);
+  });
+
+  const strongest = rows[0] || null;
+  const meaningfulConcern = rows.find((item) => (severityRank[item.level] || 0) >= 2);
   opsHazardTitle.textContent = hasActiveAlert
-    ? (currentAlerts[0]?.event || "Active weather alert")
-    : forecastHazards.length
-      ? `${[forecastHazards[0]?.phenomena, forecastHazards[0]?.significance].filter(Boolean).join(" ") || "Forecast impact"} expected`
-      : "No immediate weather impacts";
+    ? (currentAlerts[0]?.event || "Weather alert in effect")
+    : meaningfulConcern
+      ? "Weather concerns expected"
+      : "No significant weather impacts expected";
+
+  if (hazardsCard) {
+    hazardsCard.classList.remove("severity-none", "severity-minor", "severity-moderate", "severity-severe", "severity-extreme");
+    const cardLevel = strongest?.level || "none";
+    const mapped = cardLevel === "high" ? "severe" : cardLevel === "elevated" ? "moderate" : cardLevel;
+    hazardsCard.classList.add(`severity-${["minor", "moderate", "severe", "extreme"].includes(mapped) ? mapped : "none"}`);
+  }
+
   opsHazardStatus.className = "ops-status";
   opsHazardStatus.textContent = "";
 }
@@ -606,7 +623,7 @@ function operationalInsightsForPeriod(period) {
     insights.push({
       level: maxWind >= 50 ? "high" : "elevated",
       title: "Operational insight · Wind",
-      text: `Forecast winds may reach about ${Math.round(maxWind)} mph. Review wind-sensitive work and outage exposure.`,
+      text: `Winds may reach about ${Math.round(maxWind)} mph, increasing risk for debris and line stress.`,
     });
   }
 
@@ -625,7 +642,7 @@ function operationalInsightsForPeriod(period) {
     insights.push({
       level: precip >= 80 ? "elevated" : "info",
       title: "Operational insight · Rain chance",
-      text: `${Math.round(precip)}% precipitation probability for the selected forecast period.`,
+      text: "Rain is likely during this period.",
     });
   }
 
