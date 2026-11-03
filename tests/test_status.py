@@ -136,3 +136,8 @@ def test_parse_ndfd_hazard_series_aligns_time_layout():
 
 def test_ndfd_hazard_cache_key_rounds_point():
     assert api_mod._ndfd_hazard_cache_key(36.1541, -95.9928) == "36.15,-95.99"
+
+
+def test_weather_payload_exposes_selected_time_fields():
+    weather = api_mod.empty_weather()
+    assert "relative_humidity_pct" in weather
