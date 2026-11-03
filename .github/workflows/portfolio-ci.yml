@@ -76,15 +76,20 @@ jobs:
           grep -q 'leaflet@1.9.4' frontend/index.html
           grep -q 'data-forecast-layer="weather"' frontend/index.html
           grep -q 'class="ops-card-grid"' frontend/index.html
-          grep -q 'Weather · Selected Time' frontend/index.html
+          grep -q 'id="opsForecastCardTitle"' frontend/index.html
+          grep -q '>Next 24 Hours<' frontend/index.html
           grep -q 'Weather Impacts' frontend/index.html
-          grep -q 'Power &amp; Site' frontend/index.html
+          grep -q 'Power &amp; Site Info' frontend/index.html
           grep -q 'LIVE · NOW' frontend/index.html
           grep -q 'id="opsWeatherMetrics"' frontend/index.html
           grep -q 'id="opsWeatherTrend"' frontend/index.html
           grep -q 'Temperature trend' frontend/index.html
           grep -q 'renderWeatherTrend' frontend/static/app.js
           grep -q 'pickHourlyCheckpoints' frontend/static/app.js
+          grep -q 'selectedHourlyWeatherPeriod' frontend/static/app.js
+          grep -q 'renderNext24Weather' frontend/static/app.js
+          grep -q 'Current Weather' frontend/static/app.js
+          grep -q 'Forecast at Selected Time' frontend/static/app.js
           grep -q 'smoothPath' frontend/static/app.js
           grep -q 'hourly_periods' frontend/static/app.js
           grep -q 'forecastHourly' app/api.py
