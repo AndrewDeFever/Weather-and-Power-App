@@ -1,0 +1,12 @@
+Leaflet 1.9.4 vendored for local runtime use.
+
+Purpose: remove the application's runtime dependency on a third-party Leaflet CDN.
+Upstream project: https://leafletjs.com/
+Upstream release: v1.9.4
+License: BSD-2-Clause (see LICENSE)
+
+The JavaScript is the Leaflet 1.9.4 distribution build. The stylesheet is the 1.9.4 distribution stylesheet with Leaflet's small PNG UI assets embedded as data URIs so this static deployment has no Leaflet runtime asset fetches outside the application origin.
+
+Leaflet's official download page publishes these v1.9.4 SRI values for the upstream distribution:
+CSS: sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=
+JS:  sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=
