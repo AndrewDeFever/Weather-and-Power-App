@@ -216,6 +216,8 @@ const forecastNextTime = $("forecastNextTime");
 const opsForecastTitle = $("opsForecastTitle");
 const opsCurrentWeatherIcon = $("opsCurrentWeatherIcon");
 const opsForecastSummary = $("opsForecastSummary");
+const opsWeatherMode = $("opsWeatherMode");
+const opsWeatherMetrics = $("opsWeatherMetrics");
 const opsForecastStrip = $("opsForecastStrip");
 const opsHazardTitle = $("opsHazardTitle");
 const opsHazardStatus = $("opsHazardStatus");
@@ -223,6 +225,7 @@ const opsHazardList = $("opsHazardList");
 const opsPowerTitle = $("opsPowerTitle");
 const opsPowerStatus = $("opsPowerStatus");
 const opsPowerMeta = $("opsPowerMeta");
+const opsPowerSiteMeta = $("opsPowerSiteMeta");
 
 const c_loc = $("c_loc");
 const c_loc_meta = $("c_loc_meta");
@@ -470,6 +473,18 @@ function renderHazardCard() {
     opsHazardList.appendChild(empty);
   }
 
+  const insights = operationalInsightsForPeriod(selectedWeatherPeriod());
+  insights.forEach((insight) => {
+    const row = document.createElement("div");
+    row.className = `ops-insight ${insight.level || "info"}`;
+    const title = document.createElement("strong");
+    title.textContent = insight.title;
+    const text = document.createElement("span");
+    text.textContent = insight.text;
+    row.append(title, text);
+    opsHazardList.appendChild(row);
+  });
+
   const nwsRow = document.createElement("div");
   nwsRow.className = "ops-secondary-state";
   const nwsLabel = document.createElement("strong");
@@ -526,44 +541,167 @@ function meteoconUrl(condition, isDaytime = true) {
   return `${WEATHER_ICON_BASE}${encodeURIComponent(meteoconSlug(condition, isDaytime))}.svg`;
 }
 
-function renderOpsCards(data) {
-  const wx = data?.weather || {};
-  const periods = Array.isArray(wx?.forecast_periods) ? wx.forecast_periods : [];
-  const cond = wx?.condition || periods[0]?.short_forecast || "Weather unavailable";
-  const currentTemp = wx?.temperature_f;
+function isCurrentForecastSelection() {
+  return forecastTimes.length > 0 && selectedForecastTimeIndex === currentForecastTimeIndex;
+}
 
-  if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = meteoconUrl(cond, true);
+function selectedWeatherPeriod() {
+  const periods = Array.isArray(lastPayload?.weather?.forecast_periods)
+    ? lastPayload.weather.forecast_periods
+    : [];
+  if (!periods.length) return null;
+
+  const selected = forecastTimes[selectedForecastTimeIndex] || null;
+  const selectedMs = Date.parse(selected || "");
+  if (!Number.isFinite(selectedMs)) return periods[0] || null;
+
+  let nearestFuture = null;
+  for (const period of periods) {
+    const startMs = Date.parse(period?.start_time || "");
+    const endMs = Date.parse(period?.end_time || "");
+    if (!Number.isFinite(startMs)) continue;
+    if (Number.isFinite(endMs) && selectedMs >= startMs && selectedMs < endMs) return period;
+    if (startMs >= selectedMs && !nearestFuture) nearestFuture = period;
+  }
+  return nearestFuture || periods[periods.length - 1] || null;
+}
+
+function extractMaxWindMph(text) {
+  const values = String(text || "").match(/\d+(?:\.\d+)?/g);
+  if (!values?.length) return null;
+  const nums = values.map(Number).filter(Number.isFinite);
+  return nums.length ? Math.max(...nums) : null;
+}
+
+function operationalInsightsForPeriod(period) {
+  if (!period) return [];
+  const shortText = String(period?.short_forecast || "");
+  const detailText = String(period?.detailed_forecast || "");
+  const combined = `${shortText} ${detailText}`.toLowerCase();
+  const insights = [];
+
+  const maxWind = extractMaxWindMph(period?.wind_speed || detailText);
+  if (Number.isFinite(maxWind) && maxWind >= 35) {
+    insights.push({
+      level: maxWind >= 50 ? "high" : "elevated",
+      title: "Operational insight · Wind",
+      text: `Forecast winds may reach about ${Math.round(maxWind)} mph. Review wind-sensitive work and outage exposure.`,
+    });
+  }
+
+  if (combined.includes("thunderstorm") || combined.includes("severe")) {
+    insights.push({
+      level: combined.includes("severe") ? "high" : "elevated",
+      title: "Operational insight · Convection",
+      text: combined.includes("severe")
+        ? "Severe thunderstorm wording appears in the selected forecast period."
+        : "Thunderstorms are forecast during the selected period.",
+    });
+  }
+
+  const precip = Number(period?.precip_probability);
+  if (Number.isFinite(precip) && precip >= 60) {
+    insights.push({
+      level: precip >= 80 ? "elevated" : "info",
+      title: "Operational insight · Precipitation",
+      text: `${Math.round(precip)}% precipitation probability for the selected forecast period.`,
+    });
+  }
+
+  return insights.slice(0, 3);
+}
+
+function renderSelectedTimeWeather() {
+  if (!lastPayload) return;
+  const wx = lastPayload?.weather || {};
+  const current = isCurrentForecastSelection();
+  const period = selectedWeatherPeriod();
+
+  let condition = wx?.condition || period?.short_forecast || "Weather unavailable";
+  let temperature = wx?.temperature_f;
+  let summary = wx?.detailedForecast || period?.detailed_forecast || "Forecast details unavailable.";
+  let iconCondition = condition;
+  let isDaytime = true;
+  const metrics = [];
+
+  if (current) {
+    if (opsWeatherMode) {
+      opsWeatherMode.textContent = "OBSERVED · NOW";
+      opsWeatherMode.className = "time-domain-badge observed";
+    }
+    const observedAt = formatIsoLocal(wx?.observation_time);
+    if (observedAt) metrics.push(["Observation", observedAt]);
+    if (Number.isFinite(Number(wx?.wind_speed_mph))) {
+      const gust = Number.isFinite(Number(wx?.wind_gust_mph)) ? ` · Gust ${Math.round(Number(wx.wind_gust_mph))}` : "";
+      metrics.push(["Wind", `${wx?.wind_direction_cardinal || ""} ${Math.round(Number(wx.wind_speed_mph))} mph${gust}`.trim()]);
+    }
+    if (Number.isFinite(Number(wx?.relative_humidity_pct))) metrics.push(["Humidity", `${Math.round(Number(wx.relative_humidity_pct))}%`]);
+    if (period && Number.isFinite(Number(period?.precip_probability))) metrics.push(["Precip", `${Math.round(Number(period.precip_probability))}%`]);
+  } else if (period) {
+    condition = period?.short_forecast || condition;
+    temperature = period?.temperature;
+    summary = period?.detailed_forecast || summary;
+    iconCondition = condition;
+    isDaytime = period?.is_daytime !== false;
+    if (opsWeatherMode) {
+      opsWeatherMode.textContent = "FORECAST";
+      opsWeatherMode.className = "time-domain-badge forecast";
+    }
+    metrics.push(["Valid", formatIsoLocal(forecastTimes[selectedForecastTimeIndex]) || "—"]);
+    if (period?.wind_speed) metrics.push(["Wind", [period?.wind_direction, period.wind_speed].filter(Boolean).join(" ")]);
+    if (Number.isFinite(Number(period?.precip_probability))) metrics.push(["Precip", `${Math.round(Number(period.precip_probability))}%`]);
+    if (Number.isFinite(Number(period?.relative_humidity))) metrics.push(["Humidity", `${Math.round(Number(period.relative_humidity))}%`]);
+  }
+
   if (opsForecastTitle) {
-    opsForecastTitle.textContent = currentTemp !== null && currentTemp !== undefined
-      ? `${currentTemp}°F • ${cond}`
-      : cond;
+    opsForecastTitle.textContent = temperature !== null && temperature !== undefined
+      ? `${temperature}°F • ${condition}`
+      : condition;
   }
-  if (opsForecastSummary) {
-    opsForecastSummary.textContent =
-      periods[0]?.detailed_forecast || wx?.detailedForecast || "Forecast details unavailable.";
+  if (opsForecastSummary) opsForecastSummary.textContent = summary;
+  if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = meteoconUrl(iconCondition, isDaytime);
+
+  if (opsWeatherMetrics) {
+    opsWeatherMetrics.innerHTML = "";
+    metrics.slice(0, 4).forEach(([label, value]) => {
+      const item = document.createElement("div");
+      item.className = "weather-metric";
+      const k = document.createElement("span");
+      k.textContent = label;
+      const v = document.createElement("strong");
+      v.textContent = String(value || "—");
+      item.append(k, v);
+      opsWeatherMetrics.appendChild(item);
+    });
   }
+
   if (opsForecastStrip) {
     opsForecastStrip.innerHTML = "";
-    periods.slice(0, 5).forEach((period) => {
+    const periods = Array.isArray(wx?.forecast_periods) ? wx.forecast_periods : [];
+    periods.slice(0, 6).forEach((entry) => {
       const item = document.createElement("div");
       item.className = "forecast-period";
       const label = document.createElement("span");
       label.className = "forecast-period-label";
-      label.textContent = period?.name || formatIsoLocal(period?.start_time) || "Forecast";
+      label.textContent = entry?.name || formatIsoLocal(entry?.start_time) || "Forecast";
       const icon = document.createElement("img");
       icon.className = "meteocon-small";
-      icon.src = meteoconUrl(period?.short_forecast, period?.is_daytime);
+      icon.src = meteoconUrl(entry?.short_forecast, entry?.is_daytime);
       icon.alt = "";
       icon.setAttribute("aria-hidden", "true");
       const temp = document.createElement("strong");
-      const unit = period?.temperature_unit || "F";
-      temp.textContent = period?.temperature !== null && period?.temperature !== undefined
-        ? `${period.temperature}°${unit}`
+      const unit = entry?.temperature_unit || "F";
+      temp.textContent = entry?.temperature !== null && entry?.temperature !== undefined
+        ? `${entry.temperature}°${unit}`
         : "—";
       item.append(label, icon, temp);
       opsForecastStrip.appendChild(item);
     });
   }
+}
+
+function renderOpsCards(data) {
+  renderSelectedTimeWeather();
 
   renderHazardCard();
 
@@ -588,9 +726,9 @@ function renderOpsCards(data) {
   if (opsPowerMeta) {
     opsPowerMeta.innerHTML = "";
     const metrics = [
-      ["Provider", data?.provider?.platform || "—"],
       ["Customers out", nearest?.customers_out ?? (outageNearby ? "Unknown" : "0")],
       ["Distance", Number.isFinite(Number(nearest?.distance_miles)) ? `${Number(nearest.distance_miles).toFixed(2)} mi` : "—"],
+      ["Provider", data?.provider?.platform || "—"],
       ["Operational state", !powerOk ? "Check source" : outageNearby ? "Monitor" : "Normal"],
     ];
     metrics.forEach(([label, value]) => {
@@ -603,6 +741,22 @@ function renderOpsCards(data) {
       metric.append(k, v);
       opsPowerMeta.appendChild(metric);
     });
+  }
+
+  if (opsPowerSiteMeta) {
+    const siteName = data?.resolved?.name || data?.resolved?.site_id || "Selected location";
+    const city = normalizeCityDisplay(data?.resolved?.city);
+    const state = String(data?.resolved?.state || "").trim();
+    const locality = [city, state].filter(Boolean).join(", ");
+    const coords = Number.isFinite(Number(data?.resolved?.lat)) && Number.isFinite(Number(data?.resolved?.lon))
+      ? `${Number(data.resolved.lat).toFixed(3)}, ${Number(data.resolved.lon).toFixed(3)}`
+      : "";
+    opsPowerSiteMeta.innerHTML = "";
+    const name = document.createElement("strong");
+    name.textContent = siteName;
+    const meta = document.createElement("span");
+    meta.textContent = [locality, coords].filter(Boolean).join(" · ");
+    opsPowerSiteMeta.append(name, meta);
   }
 }
 
@@ -944,6 +1098,11 @@ function clearPanels() {
 
   if (opsForecastTitle) opsForecastTitle.textContent = "Weather outlook";
   if (opsForecastSummary) opsForecastSummary.textContent = "Search a site to load forecast context.";
+  if (opsWeatherMode) {
+    opsWeatherMode.textContent = "CURRENT";
+    opsWeatherMode.className = "time-domain-badge";
+  }
+  if (opsWeatherMetrics) opsWeatherMetrics.innerHTML = "";
   if (opsForecastStrip) opsForecastStrip.innerHTML = "";
   if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = `${WEATHER_ICON_BASE}partly-cloudy-day.svg`;
   ndfdHazardSeries = [];
@@ -961,6 +1120,7 @@ function clearPanels() {
     opsPowerStatus.textContent = "Search a site to load power conditions.";
   }
   if (opsPowerMeta) opsPowerMeta.innerHTML = "";
+  if (opsPowerSiteMeta) opsPowerSiteMeta.innerHTML = "";
 
   if (mapIntelTitle) mapIntelTitle.textContent = "No location selected";
   if (mapIntelMeta) {
@@ -1212,6 +1372,7 @@ function updateForecastTimeControls() {
   if (forecastPrevTime) forecastPrevTime.disabled = !hasTimes || selectedForecastTimeIndex <= currentForecastTimeIndex;
   if (forecastNextTime) forecastNextTime.disabled = !hasTimes || selectedForecastTimeIndex >= forecastTimes.length - 1;
   renderForecastTimeNotches();
+  renderSelectedTimeWeather();
   renderHazardCard();
 }
 
@@ -1395,8 +1556,8 @@ function render(query, data) {
   // Headline
   const resolvedName =
     data?.resolved?.name || data?.resolved?.site_id || data?.resolved?.id || "Result";
-  headline.textContent = `${resolvedName}`;
-  subhead.textContent = `Query: ${query}`;
+  if (headline) headline.textContent = `${resolvedName}`;
+  if (subhead) subhead.textContent = `Query: ${query}`;
 
   // Location summary
   const siteId = data?.resolved?.site_id || data?.resolved?.id || "—";
