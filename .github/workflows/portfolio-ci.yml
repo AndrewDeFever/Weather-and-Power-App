@@ -42,6 +42,11 @@ jobs:
           set -euo pipefail
           node --check frontend/static/app.js
           node --check frontend/static/vendor/leaflet/leaflet-assets.js
+          test "$(git hash-object frontend/static/vendor/leaflet/leaflet.js)" = "a3bf693d0fcaff885cc5f21b3a699aaa567b3533"
+          test "$(git hash-object frontend/static/vendor/leaflet/leaflet.css)" = "5bffc1c0fcc3ab724643f94f978d1bd23244d690"
+          test "$(git hash-object frontend/static/vendor/leaflet/leaflet-assets.js)" = "401b76c9e535928559245416c6662d4067827e0d"
+          grep -q 'Version: 1.9.4' frontend/static/vendor/VENDORED_DEPENDENCIES.md
+          grep -q 'License: BSD-2-Clause' frontend/static/vendor/VENDORED_DEPENDENCIES.md
           test -s frontend/index.html
           test -s frontend/static/styles.css
           test -s frontend/static/electric-theme.css
