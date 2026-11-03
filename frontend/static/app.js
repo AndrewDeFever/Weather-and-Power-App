@@ -649,29 +649,98 @@ function operationalInsightsForPeriod(period) {
   return insights.slice(0, 3);
 }
 
-function renderWeatherTrend(periods, selectedPeriod) {
+function formatCheckpointLabel(iso) {
+  const d = new Date(iso || "");
+  if (Number.isNaN(d.getTime())) return { date: "", time: "—" };
+  const timeZone = String(lastPayload?.resolved?.tz || "").trim() || undefined;
+  const options = timeZone ? { timeZone } : {};
+  const date = new Intl.DateTimeFormat("en-US", {
+    ...options,
+    month: "numeric",
+    day: "numeric",
+  }).format(d);
+  const time = new Intl.DateTimeFormat("en-US", {
+    ...options,
+    hour: "numeric",
+    hour12: true,
+  }).format(d).replace(":00", "");
+  return { date, time };
+}
+
+function pickHourlyCheckpoints(hourlyPeriods) {
+  const rows = (Array.isArray(hourlyPeriods) ? hourlyPeriods : [])
+    .filter((period) =>
+      Number.isFinite(Date.parse(period?.start_time || "")) &&
+      Number.isFinite(Number(period?.temperature))
+    )
+    .sort((a, b) => Date.parse(a.start_time) - Date.parse(b.start_time));
+  if (!rows.length) return [];
+
+  const nowMs = Date.now();
+  const first = rows.find((row) => Date.parse(row.start_time) >= nowMs - 60 * 60 * 1000) || rows[0];
+  const baseMs = Date.parse(first.start_time);
+  const selected = [];
+  const used = new Set();
+
+  for (let hours = 0; hours <= 24; hours += 3) {
+    const targetMs = baseMs + hours * 60 * 60 * 1000;
+    let best = null;
+    let bestDelta = Infinity;
+    rows.forEach((row) => {
+      const startMs = Date.parse(row.start_time);
+      const endMs = Date.parse(row.end_time || "");
+      const coversTarget = Number.isFinite(endMs)
+        ? targetMs >= startMs && targetMs < endMs
+        : Math.abs(startMs - targetMs) <= 60 * 60 * 1000;
+      if (!coversTarget || used.has(row.start_time)) return;
+      const delta = Math.abs(startMs - targetMs);
+      if (delta < bestDelta) {
+        best = row;
+        bestDelta = delta;
+      }
+    });
+    if (best) {
+      selected.push(best);
+      used.add(best.start_time);
+    }
+  }
+  return selected;
+}
+
+function smoothPath(points) {
+  if (points.length < 2) return "";
+  let d = `M ${points[0][0].toFixed(1)} ${points[0][1].toFixed(1)}`;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const [x0, y0] = points[i];
+    const [x1, y1] = points[i + 1];
+    const midX = (x0 + x1) / 2;
+    d += ` C ${midX.toFixed(1)} ${y0.toFixed(1)}, ${midX.toFixed(1)} ${y1.toFixed(1)}, ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+  }
+  return d;
+}
+
+function renderWeatherTrend(periods, selectedTime) {
   if (!opsWeatherTrend) return;
   opsWeatherTrend.innerHTML = "";
-  const rows = (Array.isArray(periods) ? periods : [])
-    .filter((period) => Number.isFinite(Number(period?.temperature)))
-    .slice(0, 6);
+  const rows = pickHourlyCheckpoints(periods);
 
   if (opsWeatherTrendRange) {
-    opsWeatherTrendRange.textContent = rows.length ? "Next forecast periods" : "No trend data";
+    opsWeatherTrendRange.textContent = rows.length ? "Next 24 hours" : "No hourly trend data";
   }
   if (rows.length < 2) return;
 
-  const width = 640;
-  const height = 150;
-  const padX = 34;
-  const padTop = 18;
-  const padBottom = 34;
+  const width = 720;
+  const height = 158;
+  const padX = 42;
+  const padTop = 20;
+  const padBottom = 42;
   const temps = rows.map((period) => Number(period.temperature));
   const minTemp = Math.min(...temps);
   const maxTemp = Math.max(...temps);
   const spread = Math.max(8, maxTemp - minTemp);
   const low = minTemp - Math.max(2, spread * 0.16);
   const high = maxTemp + Math.max(2, spread * 0.16);
+  const selectedMs = Date.parse(selectedTime || "");
 
   const xFor = (index) => padX + (index * (width - padX * 2)) / Math.max(1, rows.length - 1);
   const yFor = (temp) => padTop + ((high - temp) / (high - low)) * (height - padTop - padBottom);
@@ -694,14 +763,17 @@ function renderWeatherTrend(periods, selectedPeriod) {
 
   const points = rows.map((period, index) => [xFor(index), yFor(Number(period.temperature))]);
   const path = document.createElementNS(svg.namespaceURI, "path");
-  const d = points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
-  path.setAttribute("d", d);
+  path.setAttribute("d", smoothPath(points));
   path.setAttribute("class", "weather-trend-line");
   svg.appendChild(path);
 
   rows.forEach((period, index) => {
     const [x, y] = points[index];
-    const isSelected = selectedPeriod && period === selectedPeriod;
+    const startMs = Date.parse(period?.start_time || "");
+    const endMs = Date.parse(period?.end_time || "");
+    const isSelected = Number.isFinite(selectedMs) &&
+      selectedMs >= startMs &&
+      (!Number.isFinite(endMs) || selectedMs < endMs);
 
     const marker = document.createElementNS(svg.namespaceURI, "circle");
     marker.setAttribute("cx", String(x));
@@ -718,16 +790,26 @@ function renderWeatherTrend(periods, selectedPeriod) {
     tempText.textContent = `${Math.round(Number(period.temperature))}°`;
     svg.appendChild(tempText);
 
-    const label = document.createElementNS(svg.namespaceURI, "text");
-    label.setAttribute("x", String(x));
-    label.setAttribute("y", String(height - 8));
-    label.setAttribute("text-anchor", "middle");
-    label.setAttribute("class", "weather-trend-label");
-    label.textContent = String(period?.name || "").replace("Night", " N").slice(0, 10);
-    svg.appendChild(label);
+    const parts = formatCheckpointLabel(period?.start_time);
+    const dateLabel = document.createElementNS(svg.namespaceURI, "text");
+    dateLabel.setAttribute("x", String(x));
+    dateLabel.setAttribute("y", String(height - 19));
+    dateLabel.setAttribute("text-anchor", "middle");
+    dateLabel.setAttribute("class", "weather-trend-date");
+    dateLabel.textContent = parts.date;
+    svg.appendChild(dateLabel);
+
+    const timeLabel = document.createElementNS(svg.namespaceURI, "text");
+    timeLabel.setAttribute("x", String(x));
+    timeLabel.setAttribute("y", String(height - 6));
+    timeLabel.setAttribute("text-anchor", "middle");
+    timeLabel.setAttribute("class", "weather-trend-label");
+    timeLabel.textContent = parts.time;
+    svg.appendChild(timeLabel);
   });
 
   opsWeatherTrend.appendChild(svg);
+  return rows;
 }
 
 function conciseCondition(condition) {
@@ -829,29 +911,38 @@ function renderSelectedTimeWeather() {
     });
   }
 
-  const trendPeriods = Array.isArray(wx?.forecast_periods) ? wx.forecast_periods : [];
-  renderWeatherTrend(trendPeriods, period);
+  const hourlyPeriods = Array.isArray(wx?.hourly_periods) ? wx.hourly_periods : [];
+  const selectedTime = forecastTimes[selectedForecastTimeIndex] || null;
+  const checkpoints = renderWeatherTrend(hourlyPeriods, selectedTime) || [];
 
   if (opsForecastStrip) {
     opsForecastStrip.innerHTML = "";
-    const periods = trendPeriods;
-    periods.slice(0, 5).forEach((entry) => {
+    checkpoints.forEach((entry) => {
       const item = document.createElement("div");
-      item.className = "forecast-period";
+      item.className = "forecast-period hourly-forecast-period";
+
+      const parts = formatCheckpointLabel(entry?.start_time);
       const label = document.createElement("span");
       label.className = "forecast-period-label";
-      label.textContent = entry?.name || formatIsoLocal(entry?.start_time) || "Forecast";
+      label.textContent = [parts.date, parts.time].filter(Boolean).join(" · ");
+
       const icon = document.createElement("img");
       icon.className = "meteocon-small";
       icon.src = meteoconUrl(entry?.short_forecast, entry?.is_daytime);
       icon.alt = "";
       icon.setAttribute("aria-hidden", "true");
-      const temp = document.createElement("strong");
-      const unit = entry?.temperature_unit || "F";
-      temp.textContent = entry?.temperature !== null && entry?.temperature !== undefined
-        ? `${entry.temperature}°${unit}`
-        : "—";
-      item.append(label, icon, temp);
+
+      const condition = document.createElement("span");
+      condition.className = "forecast-period-condition";
+      condition.textContent = conciseCondition(entry?.short_forecast || "Forecast");
+
+      const precip = Number(entry?.precip_probability);
+      const meta = document.createElement("span");
+      meta.className = "forecast-period-meta";
+      meta.textContent = Number.isFinite(precip) && precip > 0 ? `${Math.round(precip)}% rain` : "";
+
+      item.append(label, icon, condition);
+      if (meta.textContent) item.appendChild(meta);
       opsForecastStrip.appendChild(item);
     });
   }
@@ -1543,6 +1634,7 @@ function updateForecastTimeControls() {
 
 async function loadForecastTimes(layerKey) {
   if (mapStatus) mapStatus.textContent = "Loading forecast valid times…";
+  const previousSelectedTime = forecastTimes[selectedForecastTimeIndex] || null;
   const response = await fetch(`/api/forecast/times?layer=${encodeURIComponent(layerKey)}`, {
     headers: { Accept: "application/json" },
   });
@@ -1551,7 +1643,24 @@ async function loadForecastTimes(layerKey) {
   if (payload?.error) throw new Error(String(payload.error));
   forecastTimes = Array.isArray(payload?.times) ? payload.times : [];
   currentForecastTimeIndex = findCurrentForecastTimeIndex(forecastTimes);
-  selectedForecastTimeIndex = currentForecastTimeIndex;
+
+  if (previousSelectedTime && forecastTimes.length) {
+    const targetMs = Date.parse(previousSelectedTime);
+    let closestIndex = currentForecastTimeIndex;
+    let closestDelta = Infinity;
+    forecastTimes.forEach((value, index) => {
+      const valueMs = Date.parse(value);
+      if (!Number.isFinite(valueMs) || index < currentForecastTimeIndex) return;
+      const delta = Math.abs(valueMs - targetMs);
+      if (delta < closestDelta) {
+        closestDelta = delta;
+        closestIndex = index;
+      }
+    });
+    selectedForecastTimeIndex = closestIndex;
+  } else {
+    selectedForecastTimeIndex = currentForecastTimeIndex;
+  }
   updateForecastTimeControls();
 }
 

@@ -286,6 +286,7 @@ def empty_weather(error: Optional[str] = None) -> Dict[str, Any]:
         "max_alert_severity": "none",
         "alerts": [],
         "forecast_periods": [],
+        "hourly_periods": [],
     }
     if error:
         weather["error"] = error
@@ -457,6 +458,7 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
     props = points.get("properties") or {}
     stations_url = props.get("observationStations")
     forecast_url = props.get("forecast")
+    forecast_hourly_url = props.get("forecastHourly")
 
     station_id = None
     if stations_url:
@@ -553,6 +555,32 @@ def fetch_weather(lat: float, lon: float) -> Dict[str, Any]:
                     out["temp_source_url"] = forecast_url
                 out["condition"] = period.get("shortForecast") or out.get("condition")
                 out["detailedForecast"] = period.get("detailedForecast")
+        except Exception:
+            pass
+
+    if forecast_hourly_url:
+        try:
+            hourly_response = limited_requests_get(
+                forecast_hourly_url, headers=DEFAULT_HEADERS, timeout=HTTP_TIMEOUT_S
+            )
+            hourly_response.raise_for_status()
+            hourly_periods = (hourly_response.json().get("properties") or {}).get("periods") or []
+            out["hourly_periods"] = [
+                {
+                    "start_time": p.get("startTime"),
+                    "end_time": p.get("endTime"),
+                    "is_daytime": p.get("isDaytime"),
+                    "temperature": p.get("temperature"),
+                    "temperature_unit": p.get("temperatureUnit"),
+                    "wind_speed": p.get("windSpeed"),
+                    "wind_direction": p.get("windDirection"),
+                    "precip_probability": (p.get("probabilityOfPrecipitation") or {}).get("value"),
+                    "relative_humidity": (p.get("relativeHumidity") or {}).get("value"),
+                    "short_forecast": p.get("shortForecast"),
+                }
+                for p in hourly_periods[:30]
+                if isinstance(p, dict)
+            ]
         except Exception:
             pass
 
