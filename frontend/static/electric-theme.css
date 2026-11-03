@@ -1758,3 +1758,91 @@ main .container{
 @media (max-width:900px){
   .ops-card-grid{grid-template-columns:1fr;}
 }
+
+
+/* Row alignment + compact Power & Site density */
+.ops-card-grid{
+  align-items:stretch;
+}
+.ops-card{
+  align-self:stretch;
+}
+.selected-time-card,
+.next24-card,
+.hazards-card,
+.power-card{
+  height:100%;
+}
+.selected-time-card{
+  display:flex;
+  flex-direction:column;
+}
+.selected-time-card .weather-metrics{
+  margin-top:auto;
+  margin-bottom:0;
+}
+.hazards-card{
+  display:flex;
+  flex-direction:column;
+}
+.hazards-card .ops-list{
+  margin-top:10px;
+}
+.power-card{
+  display:flex;
+  flex-direction:column;
+  padding-bottom:14px;
+}
+.power-card .ops-card-head{
+  margin-bottom:8px;
+}
+.power-card .ops-status{
+  margin:2px 0 9px;
+  padding:8px 10px;
+}
+.power-primary-metrics{
+  margin-top:7px;
+  gap:7px;
+}
+.power-primary-metrics .ops-metric{
+  min-height:64px;
+  padding:8px 10px;
+}
+.power-primary-metrics .ops-metric span{
+  margin-bottom:3px;
+}
+.power-primary-metrics .ops-metric strong{
+  font-size:.92rem;
+}
+.power-card-footer{
+  display:grid;
+  grid-template-columns:minmax(0,.85fr) minmax(0,1.6fr);
+  align-items:end;
+  gap:12px;
+  margin-top:10px;
+  padding-top:10px;
+  border-top:1px solid rgba(88,160,212,.14);
+}
+.power-card-footer .power-site-meta{
+  margin:0;
+  padding:0;
+  border-top:0;
+}
+.power-card-footer .power-verify-actions{
+  margin:0;
+}
+.power-card-footer .power-action-btn{
+  min-height:38px;
+  padding:8px 10px;
+}
+@media (max-width:1100px){
+  .power-card-footer{
+    grid-template-columns:1fr;
+    align-items:stretch;
+  }
+}
+@media (max-width:900px){
+  .ops-card{
+    height:auto;
+  }
+}
