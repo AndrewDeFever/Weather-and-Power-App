@@ -779,14 +779,23 @@ def _direct_rgb_label_map(value: Any) -> Dict[str, str]:
     return found
 
 
-def _largest_rgb_label_map(value: Any) -> Dict[str, str]:
-    best: Dict[str, str] = {}
+def _collect_rgb_label_maps(value: Any) -> List[Dict[str, str]]:
+    candidates: List[Dict[str, str]] = []
+    seen: set[Tuple[Tuple[str, str], ...]] = set()
+
+    def add(candidate: Dict[str, str]) -> None:
+        if len(candidate) < 2:
+            return
+        signature = tuple(sorted(candidate.items()))
+        if signature in seen:
+            return
+        seen.add(signature)
+        candidates.append(candidate)
 
     def walk(node: Any) -> None:
-        nonlocal best
         direct = _direct_rgb_label_map(node)
-        if len(direct) > len(best):
-            best = direct
+        if direct:
+            add(direct)
         if isinstance(node, dict):
             for child in node.values():
                 walk(child)
@@ -795,41 +804,16 @@ def _largest_rgb_label_map(value: Any) -> Dict[str, str]:
                 walk(child)
 
     walk(value)
-    return best
+    return candidates
 
 
-def _named_rgb_label_map(value: Any, token: str) -> Dict[str, str]:
-    token_lower = token.lower()
-    candidates: List[Dict[str, str]] = []
-
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            for key, child in node.items():
-                if token_lower in str(key).lower():
-                    direct = _direct_rgb_label_map(child)
-                    if direct:
-                        candidates.append(direct)
-                    nested = _largest_rgb_label_map(child)
-                    if nested:
-                        candidates.append(nested)
-                walk(child)
-        elif isinstance(node, list):
-            for child in node:
-                walk(child)
-
-    walk(value)
-    if candidates:
-        return max(candidates, key=len)
-    return {}
-
-
-def _load_ndfd_wwa_color_map() -> Dict[str, str]:
+def _load_ndfd_rgb_label_maps() -> List[Dict[str, str]]:
     now = time.time()
     with _NDFD_WWA_MAP_CACHE_LOCK:
-        cached = _NDFD_WWA_MAP_CACHE.get("colors")
+        cached = _NDFD_WWA_MAP_CACHE.get("candidates")
         loaded_at = float(_NDFD_WWA_MAP_CACHE.get("loaded_at", 0.0))
-        if isinstance(cached, dict) and cached and now - loaded_at < NDFD_LEGEND_CACHE_TTL_S:
-            return dict(cached)
+        if isinstance(cached, list) and cached and now - loaded_at < NDFD_LEGEND_CACHE_TTL_S:
+            return [dict(item) for item in cached if isinstance(item, dict)]
 
     response = limited_requests_get(
         NDFD_GRIDDATA,
@@ -839,28 +823,54 @@ def _load_ndfd_wwa_color_map() -> Dict[str, str]:
     )
     response.raise_for_status()
     payload = json.loads(response.text)
-    colors = _named_rgb_label_map(payload, "wwa") or _largest_rgb_label_map(payload)
-    if len(colors) < 20:
-        raise RuntimeError("NOAA NDFD grid metadata did not expose the expected WWA color map")
+    candidates = _collect_rgb_label_maps(payload)
+    if not candidates:
+        raise RuntimeError("Forecast grid metadata did not expose RGB label tables")
     with _NDFD_WWA_MAP_CACHE_LOCK:
         _NDFD_WWA_MAP_CACHE["loaded_at"] = now
-        _NDFD_WWA_MAP_CACHE["colors"] = dict(colors)
-    return colors
+        _NDFD_WWA_MAP_CACHE["candidates"] = [dict(item) for item in candidates]
+    return candidates
 
 
-def _hazard_items_from_png(content: bytes, color_map: Dict[str, str]) -> List[Dict[str, Any]]:
+def _png_color_counts(content: bytes) -> Dict[str, int]:
     image = Image.open(BytesIO(content)).convert("RGBA")
-    color_counts = image.getcolors(maxcolors=max(2_000_000, image.width * image.height))
-    if color_counts is None:
-        color_counts = []
-    matched: List[Dict[str, Any]] = []
+    color_counts = image.getcolors(maxcolors=max(2_000_000, image.width * image.height)) or []
+    found: Dict[str, int] = {}
     for count, rgba in color_counts:
         red, green, blue, alpha = rgba
         if alpha <= 0:
             continue
         color = f"#{red:02X}{green:02X}{blue:02X}"
-        label = color_map.get(color)
-        if not label:
+        found[color] = found.get(color, 0) + int(count)
+    return found
+
+
+def _best_rgb_label_map_for_png(
+    content: bytes,
+    candidates: List[Dict[str, str]],
+) -> Tuple[Dict[str, str], Dict[str, int]]:
+    raster_colors = _png_color_counts(content)
+    best_map: Dict[str, str] = {}
+    best_score = (-1, -1)
+    for candidate in candidates:
+        matched_colors = [color for color in candidate if color in raster_colors]
+        matched_pixels = sum(raster_colors[color] for color in matched_colors)
+        score = (len(matched_colors), matched_pixels)
+        if score > best_score:
+            best_score = score
+            best_map = candidate
+    return dict(best_map), raster_colors
+
+
+def _hazard_items_from_png(
+    content: bytes,
+    candidates: List[Dict[str, str]],
+) -> List[Dict[str, Any]]:
+    color_map, raster_colors = _best_rgb_label_map_for_png(content, candidates)
+    matched: List[Dict[str, Any]] = []
+    for color, label in color_map.items():
+        count = raster_colors.get(color)
+        if not count:
             continue
         matched.append({"label": label, "color": color, "pixels": int(count)})
     matched.sort(key=lambda item: (-int(item["pixels"]), str(item["label"])))
@@ -1194,7 +1204,7 @@ def forecast_hazard_legend(
         "VTIT": vtit_text,
     }
     try:
-        color_map = _load_ndfd_wwa_color_map()
+        color_maps = _load_ndfd_rgb_label_maps()
         upstream = limited_requests_get(
             NDFD_WMS,
             params=params,
@@ -1202,7 +1212,7 @@ def forecast_hazard_legend(
             timeout=max(HTTP_TIMEOUT_S, 8.0),
         )
         upstream.raise_for_status()
-        items = _hazard_items_from_png(upstream.content, color_map)
+        items = _hazard_items_from_png(upstream.content, color_maps)
     except Exception:
         log.exception("NDFD structured hazard legend failed vtit=%s", vtit_text)
         return {
