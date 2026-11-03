@@ -160,6 +160,7 @@ jobs:
           grep -q 'id="forecastCurrentTime"' frontend/index.html
           grep -q 'id="forecastTimeNotches"' frontend/index.html
           grep -q 'maxBounds: conusBounds' frontend/static/app.js
+          grep -q 'minZoom: 4' frontend/static/app.js
           grep -q 'maxBoundsViscosity: 1.0' frontend/static/app.js
           grep -q 'data-theme="dark"' frontend/index.html
           if grep -q 'id="themeToggle"' frontend/index.html; then
