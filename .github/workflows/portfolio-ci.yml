@@ -76,6 +76,16 @@ jobs:
           grep -q 'leaflet@1.9.4' frontend/index.html
           grep -q 'data-forecast-layer="weather"' frontend/index.html
           grep -q 'class="ops-card-grid"' frontend/index.html
+          grep -q 'Forecast Hazards' frontend/index.html
+          grep -q 'Active NWS Alerts' frontend/index.html
+          if grep -q 'North Star Workspace' frontend/index.html; then
+            echo "Map scaffolding header must not return."
+            exit 1
+          fi
+          if grep -q 'Forecast Beta' frontend/index.html; then
+            echo "Forecast Beta banner must not return."
+            exit 1
+          fi
           grep -q '/static/assets/weather-icons/weather/' frontend/index.html
           grep -q 'forecast_periods' frontend/static/app.js
           grep -q 'id="forecastTimeSlider"' frontend/index.html
