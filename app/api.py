@@ -8,7 +8,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
@@ -404,6 +404,10 @@ def _resolve_site(query_text: str) -> Tuple[Optional[str], Optional[Dict[str, An
 
 
 NDFD_WMS = "https://digital.weather.gov/ndfd/wms"
+NDFD_XML = "https://digital.weather.gov/xml/sample_products/browser_interface/ndfdXMLclient.php"
+NDFD_HAZARD_CACHE_TTL_S = 1800
+_NDFD_HAZARD_CACHE: Dict[str, Dict[str, Any]] = {}
+_NDFD_HAZARD_CACHE_LOCK = Lock()
 NDFD_TIMES_CACHE_TTL_S = 1800
 NDFD_CAPABILITIES_BUCKET_HOURS = 6
 NDFD_CAPABILITIES_TIMEOUT_S = 12.0
@@ -688,6 +692,123 @@ def _load_ndfd_times(layer_name: str, force: bool = False) -> List[str]:
         _NDFD_TIMES_CACHE["bucket"] = bucket
         _NDFD_TIMES_CACHE["layers"] = by_layer
     return times
+
+
+def _parse_ndfd_hazard_series(root: ET.Element) -> List[Dict[str, Any]]:
+    layouts: Dict[str, List[Dict[str, Optional[str]]]] = {}
+    for layout in root.findall(".//time-layout"):
+        key_node = layout.find("layout-key")
+        if key_node is None or not (key_node.text or "").strip():
+            continue
+        starts = [(node.text or "").strip() or None for node in layout.findall("start-valid-time")]
+        ends = [(node.text or "").strip() or None for node in layout.findall("end-valid-time")]
+        rows: List[Dict[str, Optional[str]]] = []
+        for index, start in enumerate(starts):
+            end = ends[index] if index < len(ends) else None
+            rows.append({"start_time": start, "end_time": end})
+        layouts[(key_node.text or "").strip()] = rows
+
+    hazards_node = root.find(".//hazards")
+    if hazards_node is None:
+        return []
+
+    layout_key = (hazards_node.attrib.get("time-layout") or "").strip()
+    times = layouts.get(layout_key, [])
+    conditions = hazards_node.findall("hazard-conditions")
+    periods: List[Dict[str, Any]] = []
+    for index, condition in enumerate(conditions):
+        timing = times[index] if index < len(times) else {"start_time": None, "end_time": None}
+        if timing.get("end_time") is None and index + 1 < len(times):
+            timing = dict(timing)
+            timing["end_time"] = times[index + 1].get("start_time")
+        hazard_rows: List[Dict[str, Optional[str]]] = []
+        for hazard in condition.findall("hazard"):
+            text_url = hazard.findtext("hazardTextURL")
+            hazard_rows.append(
+                {
+                    "code": hazard.attrib.get("hazardCode"),
+                    "phenomena": hazard.attrib.get("phenomena"),
+                    "significance": hazard.attrib.get("significance"),
+                    "hazard_type": hazard.attrib.get("hazardType"),
+                    "text_url": text_url.strip() if isinstance(text_url, str) else None,
+                }
+            )
+        periods.append(
+            {
+                "start_time": timing.get("start_time"),
+                "end_time": timing.get("end_time"),
+                "hazards": hazard_rows,
+            }
+        )
+    return periods
+
+
+def _ndfd_hazard_cache_key(lat: float, lon: float) -> str:
+    return f"{lat:.2f},{lon:.2f}"
+
+
+def _load_ndfd_hazard_series(lat: float, lon: float) -> Dict[str, Any]:
+    key = _ndfd_hazard_cache_key(lat, lon)
+    now = time.time()
+    with _NDFD_HAZARD_CACHE_LOCK:
+        cached = _NDFD_HAZARD_CACHE.get(key)
+        if cached and now - float(cached.get("ts", 0.0)) < NDFD_HAZARD_CACHE_TTL_S:
+            payload = cached.get("payload")
+            if isinstance(payload, dict):
+                return payload
+
+    begin = datetime.now(timezone.utc).replace(microsecond=0)
+    end = begin + timedelta(days=7)
+    response = limited_requests_get(
+        NDFD_XML,
+        params={
+            "lat": f"{lat:.4f}",
+            "lon": f"{lon:.4f}",
+            "product": "time-series",
+            "begin": begin.isoformat(),
+            "end": end.isoformat(),
+            "Unit": "e",
+            "wwa": "wwa",
+            "XMLformat": "DWML",
+        },
+        headers={"User-Agent": "WeatherPowerStatus/1.0", "Accept": "application/xml, text/xml"},
+        timeout=max(HTTP_TIMEOUT_S, 8.0),
+    )
+    response.raise_for_status()
+    root = ET.fromstring(response.content)
+    payload = {
+        "source": "NDFD_XML",
+        "lat": round(lat, 4),
+        "lon": round(lon, 4),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "periods": _parse_ndfd_hazard_series(root),
+        "note": "NDFD XML includes long-duration hazards and may omit short-duration warnings.",
+    }
+    with _NDFD_HAZARD_CACHE_LOCK:
+        _NDFD_HAZARD_CACHE[key] = {"ts": now, "payload": payload}
+    return payload
+
+
+@app.get("/api/forecast/point-hazards")
+def forecast_point_hazards(
+    response: Response,
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+) -> Dict[str, Any]:
+    response.headers["Cache-Control"] = f"public, max-age={NDFD_HAZARD_CACHE_TTL_S}"
+    try:
+        return _load_ndfd_hazard_series(lat, lon)
+    except Exception:
+        log.exception("NDFD point hazard request failed lat=%s lon=%s", lat, lon)
+        return {
+            "source": "NDFD_XML",
+            "lat": round(lat, 4),
+            "lon": round(lon, 4),
+            "fetched_at": None,
+            "periods": [],
+            "error": "Forecast hazard data unavailable",
+            "note": "NDFD XML includes long-duration hazards and may omit short-duration warnings.",
+        }
 
 
 @app.get("/api/forecast/times")

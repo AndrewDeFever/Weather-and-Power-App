@@ -98,3 +98,41 @@ def test_ndfd_times_parser_extracts_vtit():
         "2026-11-02T18:00:00Z",
         "2026-11-02T21:00:00Z",
     ]
+
+
+def test_parse_ndfd_hazard_series_aligns_time_layout():
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(
+        """
+        <dwml>
+          <data>
+            <time-layout>
+              <layout-key>haz-1</layout-key>
+              <start-valid-time>2026-11-03T03:00:00-06:00</start-valid-time>
+              <start-valid-time>2026-11-03T04:00:00-06:00</start-valid-time>
+            </time-layout>
+            <parameters>
+              <hazards time-layout="haz-1">
+                <hazard-conditions>
+                  <hazard hazardCode="TO.A" phenomena="Tornado" significance="Watch" hazardType="long duration">
+                    <hazardTextURL>https://example.test/tornado</hazardTextURL>
+                  </hazard>
+                </hazard-conditions>
+                <hazard-conditions/>
+              </hazards>
+            </parameters>
+          </data>
+        </dwml>
+        """
+    )
+    periods = api_mod._parse_ndfd_hazard_series(root)
+    assert periods[0]["start_time"] == "2026-11-03T03:00:00-06:00"
+    assert periods[0]["end_time"] == "2026-11-03T04:00:00-06:00"
+    assert periods[0]["hazards"][0]["code"] == "TO.A"
+    assert periods[0]["hazards"][0]["significance"] == "Watch"
+    assert periods[1]["hazards"] == []
+
+
+def test_ndfd_hazard_cache_key_rounds_point():
+    assert api_mod._ndfd_hazard_cache_key(36.1541, -95.9928) == "36.15,-95.99"
