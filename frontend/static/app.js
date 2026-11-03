@@ -1758,11 +1758,11 @@ function initForecastMap() {
   forecastMap = window.L.map(forecastMapEl, {
     zoomControl: false,
     attributionControl: true,
-    minZoom: 3,
+    minZoom: 4,
     maxZoom: 18,
     maxBounds: conusBounds,
     maxBoundsViscosity: 1.0,
-  }).fitBounds(conusBounds, { padding: [12, 12] });
+  }).setView([37.5, -96.5], 4);
 
   window.L.control.zoom({ position: "bottomright" }).addTo(forecastMap);
   forecastMap.attributionControl.setPosition("bottomleft");
