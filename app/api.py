@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import json
+from io import BytesIO
 import logging
 import os
 import re
@@ -13,6 +14,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
+from PIL import Image
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -408,7 +410,7 @@ def _resolve_site(query_text: str) -> Tuple[Optional[str], Optional[Dict[str, An
 NDFD_WMS = "https://digital.weather.gov/ndfd/wms"
 NDFD_XML = "https://digital.weather.gov/xml/sample_products/browser_interface/ndfdXMLclient.php"
 NDFD_COLORTABLE = "https://digital.weather.gov/scripts/get_colortable.php"
-NDFD_VIEWER_LEGEND = "https://digital.weather.gov/scripts/wxmap_legendImage.php"
+NDFD_GRIDDATA = "https://digital.weather.gov/scripts/get_griddata.php"
 NDFD_HAZARD_CACHE_TTL_S = 1800
 _NDFD_HAZARD_CACHE: Dict[str, Dict[str, Any]] = {}
 _NDFD_HAZARD_CACHE_LOCK = Lock()
@@ -420,6 +422,8 @@ _NDFD_TIMES_CACHE_LOCK = Lock()
 NDFD_LEGEND_CACHE_TTL_S = 21600
 _NDFD_LEGEND_CACHE: Dict[str, Dict[str, Any]] = {}
 _NDFD_LEGEND_CACHE_LOCK = Lock()
+_NDFD_WWA_MAP_CACHE: Dict[str, Any] = {"loaded_at": 0.0, "colors": {}}
+_NDFD_WWA_MAP_CACHE_LOCK = Lock()
 
 NDFD_WEATHER_LEGEND = {
     "precipitation": [
@@ -754,6 +758,90 @@ def _load_ndfd_times(layer_name: str, force: bool = False) -> List[str]:
     return times
 
 
+def _rgb_key_to_hex(value: str) -> Optional[str]:
+    match = re.fullmatch(r"\s*(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})\s*", str(value or ""))
+    if not match:
+        return None
+    rgb = [int(part) for part in match.groups()]
+    if any(part < 0 or part > 255 for part in rgb):
+        return None
+    return f"#{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
+
+
+def _direct_rgb_label_map(value: Any) -> Dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    found: Dict[str, str] = {}
+    for key, label in value.items():
+        color = _rgb_key_to_hex(str(key))
+        if color and isinstance(label, str) and label.strip():
+            found[color] = label.strip()
+    return found
+
+
+def _largest_rgb_label_map(value: Any) -> Dict[str, str]:
+    best: Dict[str, str] = {}
+
+    def walk(node: Any) -> None:
+        nonlocal best
+        direct = _direct_rgb_label_map(node)
+        if len(direct) > len(best):
+            best = direct
+        if isinstance(node, dict):
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(value)
+    return best
+
+
+def _load_ndfd_wwa_color_map() -> Dict[str, str]:
+    now = time.time()
+    with _NDFD_WWA_MAP_CACHE_LOCK:
+        cached = _NDFD_WWA_MAP_CACHE.get("colors")
+        loaded_at = float(_NDFD_WWA_MAP_CACHE.get("loaded_at", 0.0))
+        if isinstance(cached, dict) and cached and now - loaded_at < NDFD_LEGEND_CACHE_TTL_S:
+            return dict(cached)
+
+    response = limited_requests_get(
+        NDFD_GRIDDATA,
+        params={"gridtype": "ndfd"},
+        headers={"User-Agent": "WeatherPowerStatus/1.0", "Accept": "application/json, text/plain, */*"},
+        timeout=max(HTTP_TIMEOUT_S, 8.0),
+    )
+    response.raise_for_status()
+    payload = json.loads(response.text)
+    colors = _largest_rgb_label_map(payload)
+    if len(colors) < 20:
+        raise RuntimeError("NOAA NDFD grid metadata did not expose the expected WWA color map")
+    with _NDFD_WWA_MAP_CACHE_LOCK:
+        _NDFD_WWA_MAP_CACHE["loaded_at"] = now
+        _NDFD_WWA_MAP_CACHE["colors"] = dict(colors)
+    return colors
+
+
+def _hazard_items_from_png(content: bytes, color_map: Dict[str, str]) -> List[Dict[str, Any]]:
+    image = Image.open(BytesIO(content)).convert("RGBA")
+    color_counts = image.getcolors(maxcolors=max(2_000_000, image.width * image.height))
+    if color_counts is None:
+        color_counts = []
+    matched: List[Dict[str, Any]] = []
+    for count, rgba in color_counts:
+        red, green, blue, alpha = rgba
+        if alpha <= 0:
+            continue
+        color = f"#{red:02X}{green:02X}{blue:02X}"
+        label = color_map.get(color)
+        if not label:
+            continue
+        matched.append({"label": label, "color": color, "pixels": int(count)})
+    matched.sort(key=lambda item: (-int(item["pixels"]), str(item["label"])))
+    return matched
+
+
 def _temperature_season_code_for_month(month: int) -> int:
     if month in (12, 1, 2):
         return -1
@@ -1045,64 +1133,66 @@ def forecast_legend(
     }
 
 
-@app.get("/api/forecast/legend-image")
-def forecast_legend_image(
+@app.get("/api/forecast/hazard-legend")
+def forecast_hazard_legend(
     bbox: str = Query(..., max_length=160),
     vtit: str = Query(..., max_length=128),
-    width: int = Query(900, ge=240, le=1400),
-) -> Response:
+    width: int = Query(900, ge=240, le=1024),
+    height: int = Query(512, ge=120, le=1024),
+) -> Dict[str, Any]:
     bbox_parts = [part.strip() for part in bbox.split(",")]
     if len(bbox_parts) != 4:
-        return JSONResponse(status_code=400, content={"error": "Invalid bbox"})
+        return {"kind": "hazard-categories", "items": [], "error": "Invalid bbox"}
     try:
         bbox_values = [float(part) for part in bbox_parts]
     except ValueError:
-        return JSONResponse(status_code=400, content={"error": "Invalid bbox"})
+        return {"kind": "hazard-categories", "items": [], "error": "Invalid bbox"}
     if not all(abs(value) <= 30000000 for value in bbox_values):
-        return JSONResponse(status_code=400, content={"error": "Invalid bbox"})
+        return {"kind": "hazard-categories", "items": [], "error": "Invalid bbox"}
 
     vtit_text = (vtit or "").strip()
     if not re.fullmatch(r"[0-9A-Za-z:+.\-TZ_]+", vtit_text):
-        return JSONResponse(status_code=400, content={"error": "Invalid forecast time"})
-    valid_time = vtit_text.split("_", 1)[0]
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z?", valid_time):
-        return JSONResponse(status_code=400, content={"error": "Invalid forecast time"})
-    viewer_vt = valid_time[:16]
+        return {"kind": "hazard-categories", "items": [], "error": "Invalid forecast time"}
 
     params = {
-        "dataset": "ndfd",
-        "element": "wwa",
-        "region": "conus",
-        "vt": viewer_vt,
-        "opacity": "0.8",
-        "left": str(bbox_values[0]),
-        "bottom": str(bbox_values[1]),
-        "right": str(bbox_values[2]),
-        "top": str(bbox_values[3]),
-        "width": str(width),
-        "ms": "english",
+        "SERVICE": "WMS",
+        "REQUEST": "GetMap",
+        "VERSION": "1.3.0",
+        "LAYERS": NDFD_ALLOWED_LAYERS["hazards"],
+        "STYLES": "",
+        "FORMAT": "image/png",
+        "TRANSPARENT": "TRUE",
+        "CRS": "EPSG:3857",
+        "BBOX": ",".join(str(value) for value in bbox_values),
+        "WIDTH": str(width),
+        "HEIGHT": str(height),
+        "VTIT": vtit_text,
     }
     try:
+        color_map = _load_ndfd_wwa_color_map()
         upstream = limited_requests_get(
-            NDFD_VIEWER_LEGEND,
+            NDFD_WMS,
             params=params,
             headers={"User-Agent": "WeatherPowerStatus/1.0", "Accept": "image/png"},
             timeout=max(HTTP_TIMEOUT_S, 8.0),
         )
         upstream.raise_for_status()
+        items = _hazard_items_from_png(upstream.content, color_map)
     except Exception:
-        log.exception("NDFD dynamic hazard legend request failed vtit=%s", vtit_text)
-        return JSONResponse(status_code=502, content={"error": "Forecast hazard legend unavailable"})
+        log.exception("NDFD structured hazard legend failed vtit=%s", vtit_text)
+        return {
+            "kind": "hazard-categories",
+            "items": [],
+            "source": "NOAA NDFD WWA raster + viewer color map",
+            "error": "Hazard legend unavailable",
+        }
 
-    content_type = (upstream.headers.get("content-type") or "").lower()
-    if "image/" not in content_type:
-        return JSONResponse(status_code=502, content={"error": "Forecast hazard legend unavailable"})
-
-    return Response(
-        content=upstream.content,
-        media_type="image/png",
-        headers={"Cache-Control": "public, max-age=60"},
-    )
+    return {
+        "kind": "hazard-categories",
+        "items": items,
+        "source": "NOAA NDFD WWA raster + viewer color map",
+        "error": None,
+    }
 
 
 @app.get("/api/weather/icon")
