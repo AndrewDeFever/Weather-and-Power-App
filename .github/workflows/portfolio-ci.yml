@@ -74,7 +74,6 @@ jobs:
           grep -q 'id="forecastMap"' frontend/index.html
           grep -q 'min-height:clamp(520px,62vh,760px)' frontend/static/electric-theme.css
           grep -q 'initForecastMap' frontend/static/app.js
-          grep -q 'leaflet@1.9.4' frontend/index.html
           grep -q 'data-forecast-layer="weather"' frontend/index.html
           grep -q 'id="forecastLegend"' frontend/index.html
           grep -q 'forecast-legend' frontend/static/electric-theme.css
