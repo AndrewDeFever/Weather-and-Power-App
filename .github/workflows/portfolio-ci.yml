@@ -122,6 +122,8 @@ jobs:
           grep -q 'formatEtrForDisplay' frontend/static/app.js
           grep -q 'Next period:' frontend/static/app.js
           grep -q 'id="opsPowerSiteMeta"' frontend/index.html
+          grep -q 'id="opsPowerFreshness"' frontend/index.html
+          grep -q 'RECENT RESULT' frontend/static/app.js
           grep -q 'class="power-card-footer"' frontend/index.html
           grep -q 'id="opsOpenGoogleMaps"' frontend/index.html
           grep -q 'id="opsOpenOutageMap"' frontend/index.html
