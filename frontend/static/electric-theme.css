@@ -982,18 +982,18 @@ html,body{color-scheme:dark;}
   color:rgba(224,246,255,.82);
 }
 .forecast-layer-btn{
-  background:rgba(7,28,55,.35);
+  background:rgba(7,28,55,.78);
   border-color:rgba(126,220,255,.26);
   backdrop-filter:blur(8px);
   box-shadow:0 5px 16px rgba(0,0,0,.18);
 }
 .forecast-layer-btn:hover{
-  background:rgba(18,62,98,.48);
+  background:rgba(18,62,98,.90);
 }
 .forecast-layer-btn.active{
   color:#effcff;
   border-color:rgba(108,230,255,.78);
-  background:rgba(22,171,214,.35);
+  background:rgba(22,171,214,.82);
   box-shadow:0 0 0 1px rgba(96,230,255,.10),0 6px 20px rgba(0,0,0,.24);
 }
 .map-status:empty{display:none;}
