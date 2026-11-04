@@ -220,6 +220,7 @@ const opsForecastSummary = $("opsForecastSummary");
 const opsWeatherMode = $("opsWeatherMode");
 const opsWeatherMetrics = $("opsWeatherMetrics");
 const opsForecastStrip = $("opsForecastStrip");
+const opsNext24Empty = $("opsNext24Empty");
 const opsWeatherTrend = $("opsWeatherTrend");
 const opsWeatherTrendRange = $("opsWeatherTrendRange");
 const opsHazardTitle = $("opsHazardTitle");
@@ -851,6 +852,7 @@ function renderNext24Weather() {
   const hourlyPeriods = Array.isArray(wx?.hourly_periods) ? wx.hourly_periods : [];
   const checkpoints = renderWeatherTrend(hourlyPeriods) || [];
 
+  if (opsNext24Empty) opsNext24Empty.hidden = checkpoints.length > 0;
   if (!opsForecastStrip) return;
   opsForecastStrip.innerHTML = "";
 
@@ -1400,31 +1402,32 @@ function clearPanels() {
   c_pwr_meta.textContent = "—";
 
   if (opsForecastTitle) opsForecastTitle.textContent = "Weather outlook";
-  if (opsForecastSummary) opsForecastSummary.textContent = "Search a site to load forecast context.";
+  if (opsForecastSummary) opsForecastSummary.textContent = "Select a pin on the map or search a site to load current weather.";
   if (opsWeatherMode) {
     opsWeatherMode.textContent = "CURRENT";
     opsWeatherMode.className = "time-domain-badge";
   }
   if (opsWeatherMetrics) opsWeatherMetrics.innerHTML = "";
   if (opsForecastStrip) opsForecastStrip.innerHTML = "";
+  if (opsNext24Empty) opsNext24Empty.hidden = false;
   if (opsCurrentWeatherIcon) opsCurrentWeatherIcon.src = `${WEATHER_ICON_BASE}partly-cloudy-day.svg`;
   ndfdHazardSeries = [];
   ndfdHazardError = null;
   ndfdHazardLocationKey = null;
-  if (opsHazardTitle) opsHazardTitle.textContent = "No location selected";
+  if (opsHazardTitle) opsHazardTitle.textContent = "Select a location";
   if (opsHazardStatus) {
     opsHazardStatus.className = "ops-status good";
-    opsHazardStatus.textContent = "No active hazard context loaded.";
+    opsHazardStatus.textContent = "Select a pin on the map or search a site to load weather impacts.";
   }
   if (opsHazardList) opsHazardList.innerHTML = "";
-  if (opsPowerTitle) opsPowerTitle.textContent = "Regional overview";
+  if (opsPowerTitle) opsPowerTitle.textContent = "Select a location";
   if (opsPowerFreshness) {
     opsPowerFreshness.className = "time-domain-badge";
     opsPowerFreshness.textContent = "NOT LOADED";
   }
   if (opsPowerStatus) {
     opsPowerStatus.className = "ops-status good";
-    opsPowerStatus.textContent = "Search a site to load power conditions.";
+    opsPowerStatus.textContent = "Select a pin on the map or search a site to load power conditions.";
   }
   if (opsPowerMeta) opsPowerMeta.innerHTML = "";
   if (opsPowerSiteMeta) opsPowerSiteMeta.innerHTML = "";
