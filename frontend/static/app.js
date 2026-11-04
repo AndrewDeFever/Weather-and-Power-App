@@ -198,7 +198,6 @@ const suggestions = $("suggestions");
 // client-side aborts before API timeout handling completes.
 const CLIENT_TIMEOUT_MS = 17000;
 
-const statusDot = $("statusDot");
 const statusText = $("statusText");
 
 const headline = $("headline");
@@ -1102,11 +1101,7 @@ function validateQueryInput(raw) {
 // --------------------
 
 function setStatus(state, msg) {
-  statusDot.className = "dot";
-  if (state === "loading") statusDot.classList.add("live");
-  if (state === "ok") statusDot.classList.add("ok");
-  if (state === "warn") statusDot.classList.add("warn");
-  statusText.textContent = msg;
+  if (statusText) statusText.textContent = msg;
 }
 
 function showToast(message) {
@@ -1585,7 +1580,7 @@ function renderScalarForecastLegend(payload) {
   if (!forecastLegend) return;
   const stops = Array.isArray(payload?.stops) ? payload.stops : [];
   if (!stops.length) {
-    setForecastLegendLoading("NOAA legend unavailable");
+    setForecastLegendLoading("Forecast legend unavailable");
     return;
   }
 
@@ -1593,7 +1588,7 @@ function renderScalarForecastLegend(payload) {
   const max = Number(payload.max);
   const range = max - min;
   if (!Number.isFinite(min) || !Number.isFinite(max) || range <= 0) {
-    setForecastLegendLoading("NOAA legend unavailable");
+    setForecastLegendLoading("Forecast legend unavailable");
     return;
   }
 
@@ -1610,7 +1605,7 @@ function renderScalarForecastLegend(payload) {
     .filter(Boolean);
 
   if (!gradientStops.length) {
-    setForecastLegendLoading("NOAA legend unavailable");
+    setForecastLegendLoading("Forecast legend unavailable");
     return;
   }
 
@@ -1687,7 +1682,7 @@ async function loadStaticForecastLegend(layerKey) {
     else renderScalarForecastLegend(payload);
   } catch (error) {
     if (requestId === forecastLegendRequestId && activeForecastLayer === layerKey) {
-      setForecastLegendLoading("NOAA legend unavailable");
+      setForecastLegendLoading("Forecast legend unavailable");
     }
     console.error(error);
   }
