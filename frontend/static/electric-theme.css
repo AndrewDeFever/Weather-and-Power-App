@@ -2176,3 +2176,14 @@ main .container{
     font-size:1.75rem!important;
   }
 }
+
+.recent-badge{
+  color:#ffe6a6;
+  border-color:rgba(244,194,79,.34);
+  background:rgba(176,121,25,.13);
+}
+.unavailable-badge{
+  color:#ffc2c2;
+  border-color:rgba(255,103,103,.32);
+  background:rgba(184,54,54,.12);
+}
