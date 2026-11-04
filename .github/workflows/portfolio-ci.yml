@@ -77,8 +77,20 @@ jobs:
           test -s frontend/static/assets/weather-icons/ui/wind.svg
           grep -q 'SubReal Studios' frontend/index.html
           grep -q 'href="/about.html"' frontend/index.html
-          grep -q 'Public portfolio project' frontend/about.html
+          grep -q 'id="opsNext24Empty"' frontend/index.html
+          grep -q 'Select a pin on the map or search a site to load current weather.' frontend/index.html
+          grep -q 'Select a pin on the map or search a site to load weather impacts.' frontend/index.html
+          grep -q 'Select a pin on the map or search a site to load power conditions.' frontend/index.html
+          if grep -Fq '\n  <script' frontend/index.html; then
+            echo "Literal backslash-n text must not appear between script tags."
+            exit 1
+          fi
+          grep -q 'About the project' frontend/about.html
           grep -q 'View source on GitHub' frontend/about.html
+          if grep -q 'Public and synthetic by design' frontend/about.html; then
+            echo "Removed About-page synthetic-design card must not return."
+            exit 1
+          fi
           grep -q 'const API_ENDPOINT = "/api/status"' frontend/static/app.js
           grep -q 'DEMO_TUL_01' frontend/static/app.js
           grep -q 'id="forecastMap"' frontend/index.html
