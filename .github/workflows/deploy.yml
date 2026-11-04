@@ -114,6 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f frontend/index.html
+          test -f frontend/about.html
           test -f frontend/static/app.js
           test -f frontend/static/styles.css
           test -f frontend/static/electric-theme.css
@@ -137,7 +138,7 @@ jobs:
           set -euo pipefail
           aws cloudfront create-invalidation \
             --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-            --paths "/" "/index.html" \
+            --paths "/" "/index.html" "/about.html" \
             --no-cli-pager >/dev/null
           echo "CloudFront invalidation submitted for / and /index.html."
 
