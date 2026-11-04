@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>About | SubReal Studios Weather & Power</title>
+  <meta
+    name="description"
+    content="About the SubReal Studios Weather & Power public portfolio application."
+  />
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=20260907a">
+  <link rel="stylesheet" href="/static/styles.css?v=20260907a">
+  <link rel="stylesheet" href="/static/electric-theme.css?v=20261103g">
+</head>
+<body class="about-page">
+  <header class="topbar about-topbar">
+    <div class="container">
+      <div class="header-row about-header-row">
+        <a class="brand about-brand-link" href="/" aria-label="Back to Weather and Power dashboard">
+          <img
+            class="brand-logo"
+            src="/static/subreal-weather-logo.png?v=20260908a"
+            alt="SubReal Studios Weather and Power. Real Conditions. Real Impact."
+          />
+        </a>
+        <a class="about-back-link" href="/">Back to dashboard</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="about-main">
+    <div class="container about-container">
+      <section class="about-hero">
+        <p class="about-eyebrow">Public portfolio project</p>
+        <h1>Weather &amp; Power</h1>
+        <p class="about-lede">
+          A situational-awareness dashboard that brings current weather, time-aware forecast maps,
+          hazard context, and public utility outage information into one operational view.
+        </p>
+      </section>
+
+      <section class="about-grid" aria-label="Project overview">
+        <article class="about-card">
+          <h2>What it explores</h2>
+          <p>
+            External weather and utility systems do not speak the same language. This project explores
+            how to normalize those differences, present the most useful signals together, and degrade
+            gracefully when an upstream source is slow or unavailable.
+          </p>
+        </article>
+
+        <article class="about-card">
+          <h2>What the dashboard does</h2>
+          <ul>
+            <li>Shows current conditions and a next-24-hours weather outlook.</li>
+            <li>Provides forecast layers for weather, temperature, precipitation, wind, and hazards.</li>
+            <li>Separates current alert context from longer-duration forecast hazards.</li>
+            <li>Combines weather context with nearby public utility outage information.</li>
+          </ul>
+        </article>
+
+        <article class="about-card">
+          <h2>How it works</h2>
+          <p>
+            The browser loads a static interface through Amazon's content-delivery network. Application
+            requests go to a serverless Python API, which validates input, gathers public weather and
+            utility information, normalizes provider differences, and returns one consistent response.
+          </p>
+        </article>
+
+        <article class="about-card">
+          <h2>Public-safe demonstration data</h2>
+          <p>
+            The committed site records are synthetic portfolio locations. They preserve realistic
+            application behavior without publishing private facilities, addresses, contact details, or
+            internal operational data.
+          </p>
+        </article>
+      </section>
+
+      <section class="about-wide-card">
+        <div>
+          <p class="about-eyebrow">Data and attribution</p>
+          <h2>Public sources, product-focused presentation</h2>
+          <p>
+            Weather information is derived from public U.S. weather services. Outage information comes
+            from publicly available utility-provider systems when those providers make data available.
+            Map imagery is provided by Esri. Source systems can change independently, so individual
+            integrations may require maintenance over time.
+          </p>
+        </div>
+      </section>
+
+      <section class="about-wide-card about-source-card">
+        <div>
+          <p class="about-eyebrow">Engineering</p>
+          <h2>Source and implementation</h2>
+          <p>
+            The project is built with a static JavaScript frontend, Leaflet for mapping, FastAPI for the
+            backend contract, and a serverless Amazon Web Services deployment. Production releases are
+            manually triggered after validation.
+          </p>
+        </div>
+        <div class="about-actions">
+          <a
+            class="about-primary-link"
+            href="https://github.com/AndrewDeFever/Weather-and-Power-App"
+            target="_blank"
+            rel="noopener noreferrer"
+          >View source on GitHub</a>
+          <a class="about-secondary-link" href="/">Open dashboard</a>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="storm-footer" aria-label="SubReal Studios project footer">
+    <div class="footer-inner">
+      <span>Built by</span>
+      <span class="electric">SubReal Studios</span>
+      <span class="footer-divider">|</span>
+      <a class="footer-link" href="/">Dashboard</a>
+      <span class="footer-divider">|</span>
+      <span>Turn ideas into impact.</span>
+    </div>
+  </footer>
+</body>
+</html>
