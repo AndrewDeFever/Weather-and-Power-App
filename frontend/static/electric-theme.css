@@ -2339,3 +2339,44 @@ main .container{
   .about-wide-card{align-items:flex-start;flex-direction:column;padding:24px 22px;}
   .about-actions{width:100%;min-width:0;}
 }
+
+
+/* Header/About discoverability and empty-state guidance */
+.topbar-about-link{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:42px;
+  padding:0 15px;
+  border:1px solid rgba(83,172,255,.28);
+  border-radius:12px;
+  background:rgba(6,18,38,.68);
+  color:#dcecff;
+  font-weight:800;
+  text-decoration:none;
+  white-space:nowrap;
+}
+.topbar-about-link:hover,
+.topbar-about-link:focus-visible{
+  color:#69e6ff;
+  border-color:rgba(53,220,255,.52);
+}
+.empty-card-guidance{
+  margin:12px 0 4px;
+}
+@media (max-width:760px){
+  .topbar-about-link{
+    order:2;
+    margin-left:auto;
+  }
+}
+
+.about-disclosure{
+  max-width:900px;
+  margin:18px auto 0;
+  padding:0 10px 10px;
+  color:#8ea6bd;
+  font-size:.86rem;
+  line-height:1.55;
+  text-align:center;
+}
