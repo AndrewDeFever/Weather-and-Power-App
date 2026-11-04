@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>About | SubReal Studios Weather & Power</title>
+  <meta name="description" content="About the Weather & Power public portfolio project from SubReal Studios." />
+  <link rel="icon" href="/static/subreal-weather-logo.png" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/electric-theme.css" />
+</head>
+<body class="about-page">
+  <header class="storm-header">
+    <div class="container">
+      <div class="header-row">
+        <a class="brand" href="/" aria-label="Return to Weather & Power">
+          <img src="/static/subreal-weather-logo.png" alt="SubReal Studios Weather and Power" />
+        </a>
+        <a class="about-link" href="/">Back to dashboard</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="about-main">
+    <section class="about-hero">
+      <p class="about-eyebrow">Public portfolio project</p>
+      <h1>Weather &amp; Power</h1>
+      <p class="about-lede">
+        Weather &amp; Power is a serverless situational-awareness application that brings current weather,
+        time-aware forecast maps, hazard context, and public utility-outage information into one operational view.
+        The goal is to make several independent public data sources easier to interpret together around a selected location.
+      </p>
+    </section>
+
+    <section class="about-grid">
+      <article class="about-card">
+        <h2>What it explores</h2>
+        <p>
+          Real-world operational decisions often depend on data from systems that were never designed to work together.
+          This project explores how to normalize those differences, keep the user experience coherent, and degrade gracefully
+          when one upstream source is slow or unavailable.
+        </p>
+      </article>
+
+      <article class="about-card">
+        <h2>What the app does</h2>
+        <ul>
+          <li>Shows current weather and a next-24-hours outlook.</li>
+          <li>Provides time-aware forecast layers for weather, temperature, precipitation, wind, and hazards.</li>
+          <li>Separates current alert context from longer-duration forecast hazards.</li>
+          <li>Normalizes public utility-outage information into a consistent power-status view.</li>
+        </ul>
+      </article>
+
+      <article class="about-card">
+        <h2>Public and synthetic by design</h2>
+        <p>
+          This is a personal/public portfolio project. Committed site records are synthetic demonstration locations.
+          They are not operational facilities, and the repository is intentionally designed to avoid publishing internal
+          infrastructure, private addresses, contact information, or organization-specific data.
+        </p>
+      </article>
+
+      <article class="about-card">
+        <h2>How it is built</h2>
+        <p>
+          The browser is served through CloudFront with static assets in Amazon S3. API requests route through the same
+          public hostname to API Gateway and a FastAPI application running on AWS Lambda. The backend validates requests,
+          normalizes provider responses, applies timeouts and fallback behavior, and limits outbound destinations.
+        </p>
+      </article>
+
+      <article class="about-card about-wide">
+        <h2>Data sources</h2>
+        <p>
+          Weather observations, forecasts, alerts, and forecast-map products come from public U.S. weather services.
+          Utility outage context comes from publicly accessible utility-provider sources when available. Base-map imagery
+          is provided by Esri. Availability and restoration estimates remain subject to the underlying public providers.
+        </p>
+      </article>
+
+      <article class="about-card about-wide">
+        <h2>Engineering focus</h2>
+        <p>
+          The project emphasizes integration engineering more than dashboard decoration: heterogeneous provider normalization,
+          bounded external calls, partial-failure handling, time-aware GIS visualization, serverless AWS delivery, publication-safe
+          demo data, and a deployment pipeline using GitHub Actions with AWS OIDC.
+        </p>
+        <div class="about-actions">
+          <a class="about-link" href="https://github.com/AndrewDeFever/Weather-and-Power-App">View source on GitHub</a>
+          <a class="about-link" href="/">Open Weather &amp; Power</a>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="storm-footer" aria-label="SubReal Studios project footer">
+    <div class="footer-inner">
+      <span>Built by</span>
+      <span class="electric">SubReal Studios</span>
+      <span class="footer-divider">|</span>
+      <span>Turn ideas into impact.</span>
+    </div>
+  </footer>
+</body>
+</html>
