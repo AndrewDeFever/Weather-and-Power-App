@@ -114,6 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f frontend/index.html
+          test -f frontend/about.html
           test -f frontend/static/app.js
           test -f frontend/static/styles.css
           test -f frontend/static/electric-theme.css
@@ -128,6 +129,11 @@ jobs:
             --cache-control "no-cache, no-store, must-revalidate" \
             --content-type "text/html"
 
+          aws s3 cp frontend/about.html "s3://${FRONTEND_BUCKET}/about.html" \
+            --only-show-errors \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --content-type "text/html"
+
       - name: "Invalidate CloudFront frontend cache"
         if: ${{ env.CLOUDFRONT_DISTRIBUTION_ID != '' }}
         shell: bash
@@ -135,7 +141,7 @@ jobs:
           set -euo pipefail
           aws cloudfront create-invalidation \
             --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-            --paths "/" "/index.html" \
+            --paths "/" "/index.html" "/about.html" \
             --no-cli-pager >/dev/null
           echo "CloudFront invalidation submitted for / and /index.html."
 
