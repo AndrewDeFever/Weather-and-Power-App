@@ -2037,7 +2037,7 @@ function renderDemoSiteMarkers() {
 
     const marker = window.L.circleMarker([lat, lon], { ...DEMO_MARKER_STYLE }).addTo(forecastMap);
     marker.on("click", () => {
-      void executeSearch(siteId);
+      void executeSearch(siteId, publicSiteLabel(site));
     });
     demoSiteMarkers.set(siteId, marker);
   });
