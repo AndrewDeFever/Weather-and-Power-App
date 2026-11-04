@@ -123,10 +123,12 @@ jobs:
             --only-show-errors \
             --cache-control "no-cache, no-store, must-revalidate"
 
-          aws s3 cp frontend/index.html "s3://${FRONTEND_BUCKET}/index.html" \
-            --only-show-errors \
-            --cache-control "no-cache, no-store, must-revalidate" \
-            --content-type "text/html"
+          for page in frontend/*.html; do
+            aws s3 cp "${page}" "s3://${FRONTEND_BUCKET}/$(basename "${page}")" \
+              --only-show-errors \
+              --cache-control "no-cache, no-store, must-revalidate" \
+              --content-type "text/html"
+          done
 
       - name: "Invalidate CloudFront frontend cache"
         if: ${{ env.CLOUDFRONT_DISTRIBUTION_ID != '' }}
