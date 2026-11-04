@@ -1227,6 +1227,16 @@ main .container{
   border-color:rgba(45,220,145,.30);
   background:rgba(31,184,119,.11);
 }
+.recent-badge{
+  color:#ffe6a6;
+  border-color:rgba(244,194,79,.34);
+  background:rgba(176,121,25,.13);
+}
+.unavailable-badge{
+  color:#ffc2c2;
+  border-color:rgba(255,103,103,.32);
+  background:rgba(184,54,54,.12);
+}
 .weather-metrics{
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));

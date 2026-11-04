@@ -226,6 +226,7 @@ const opsHazardTitle = $("opsHazardTitle");
 const opsHazardStatus = $("opsHazardStatus");
 const opsHazardList = $("opsHazardList");
 const opsPowerTitle = $("opsPowerTitle");
+const opsPowerFreshness = $("opsPowerFreshness");
 const opsPowerStatus = $("opsPowerStatus");
 const opsPowerMeta = $("opsPowerMeta");
 const opsPowerSiteMeta = $("opsPowerSiteMeta");
@@ -982,6 +983,27 @@ function renderOpsCards(data) {
     powerCard.classList.add(!powerOk ? "power-unknown" : outageNearby ? "power-outage" : "power-normal");
   }
   if (opsPowerTitle) opsPowerTitle.textContent = utility;
+  if (opsPowerFreshness) {
+    const powerMeta = data?.power?.meta || {};
+    const cached = powerMeta?.cached === true;
+    const cacheAgeSeconds = Number(powerMeta?.cache_age_s);
+    opsPowerFreshness.className = "time-domain-badge";
+    if (!powerOk) {
+      opsPowerFreshness.classList.add("unavailable-badge");
+      opsPowerFreshness.textContent = "UNAVAILABLE";
+    } else if (cached) {
+      const cacheAgeMinutes = Number.isFinite(cacheAgeSeconds)
+        ? Math.max(1, Math.round(cacheAgeSeconds / 60))
+        : null;
+      opsPowerFreshness.classList.add("recent-badge");
+      opsPowerFreshness.textContent = cacheAgeMinutes
+        ? `RECENT RESULT · ${cacheAgeMinutes}m`
+        : "RECENT RESULT";
+    } else {
+      opsPowerFreshness.classList.add("live-badge");
+      opsPowerFreshness.textContent = "LIVE LOOKUP";
+    }
+  }
   if (opsPowerStatus) {
     opsPowerStatus.className = "ops-status " + (!powerOk ? "state-unknown" : outageNearby ? "state-outage" : "state-good");
     opsPowerStatus.textContent = !powerOk
@@ -1396,6 +1418,10 @@ function clearPanels() {
   }
   if (opsHazardList) opsHazardList.innerHTML = "";
   if (opsPowerTitle) opsPowerTitle.textContent = "Regional overview";
+  if (opsPowerFreshness) {
+    opsPowerFreshness.className = "time-domain-badge";
+    opsPowerFreshness.textContent = "NOT LOADED";
+  }
   if (opsPowerStatus) {
     opsPowerStatus.className = "ops-status good";
     opsPowerStatus.textContent = "Search a site to load power conditions.";

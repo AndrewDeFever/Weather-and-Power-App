@@ -99,7 +99,11 @@ jobs:
           grep -q '>Next 24 Hours<' frontend/index.html
           grep -q 'Weather Impacts' frontend/index.html
           grep -q 'Power &amp; Site Info' frontend/index.html
-          grep -q 'LIVE · NOW' frontend/index.html
+          grep -q 'id="opsPowerFreshness"' frontend/index.html
+          if grep -q 'LIVE · NOW' frontend/index.html; then
+            echo "Static power freshness wording must not return."
+            exit 1
+          fi
           grep -q 'id="opsWeatherMetrics"' frontend/index.html
           grep -q 'id="opsWeatherTrend"' frontend/index.html
           grep -q 'Temperature trend' frontend/index.html
@@ -122,6 +126,8 @@ jobs:
           grep -q 'formatEtrForDisplay' frontend/static/app.js
           grep -q 'Next period:' frontend/static/app.js
           grep -q 'id="opsPowerSiteMeta"' frontend/index.html
+          grep -q 'id="opsPowerFreshness"' frontend/index.html
+          grep -q 'RECENT RESULT' frontend/static/app.js
           grep -q 'class="power-card-footer"' frontend/index.html
           grep -q 'id="opsOpenGoogleMaps"' frontend/index.html
           grep -q 'id="opsOpenOutageMap"' frontend/index.html
