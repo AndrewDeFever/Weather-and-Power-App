@@ -48,6 +48,7 @@ jobs:
           grep -q 'Version: 1.9.4' frontend/static/vendor/VENDORED_DEPENDENCIES.md
           grep -q 'License: BSD-2-Clause' frontend/static/vendor/VENDORED_DEPENDENCIES.md
           test -s frontend/index.html
+          test -s frontend/about.html
           test -s frontend/static/styles.css
           test -s frontend/static/electric-theme.css
           test -s frontend/static/electric-storm-tile.png
@@ -75,6 +76,9 @@ jobs:
           test -s frontend/static/assets/weather-icons/ui/triangle-alert.svg
           test -s frontend/static/assets/weather-icons/ui/wind.svg
           grep -q 'SubReal Studios' frontend/index.html
+          grep -q 'href="/about.html"' frontend/index.html
+          grep -q 'Public portfolio project' frontend/about.html
+          grep -q 'View source on GitHub' frontend/about.html
           grep -q 'const API_ENDPOINT = "/api/status"' frontend/static/app.js
           grep -q 'DEMO_TUL_01' frontend/static/app.js
           grep -q 'id="forecastMap"' frontend/index.html
