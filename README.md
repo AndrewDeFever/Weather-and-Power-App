@@ -1,18 +1,156 @@
-# Weather & Power Status
+# Weather & Power
 
-A serverless situational-awareness application that combines National Weather Service data with normalized electric-utility outage information behind a single FastAPI API.
+A serverless weather-and-power situational-awareness application that combines current weather, time-aware forecast maps, hazard context, and normalized public utility-outage information in one operational view.
 
-This repository is the **serverless portfolio lineage** of the project. It is designed for AWS Lambda/API Gateway with a static frontend, and all committed site records are synthetic demonstration data.
+**Live demo:** https://wnp.subrealstudios.com/  
+**About the project:** https://wnp.subrealstudios.com/about.html
 
-## What It Does
+The project is built as a public portfolio application. Committed site records are synthetic demonstration locations, while weather and utility context is derived from public external sources.
 
-`GET /api/status` accepts either a synthetic `site_id` or latitude/longitude coordinates and returns a normalized status response containing weather, alert, utility, and nearby outage context when the upstream provider makes that information available.
+## Table of Contents
 
-The backend separates provider-specific collection logic from the API contract so utilities with very different outage systems can be handled through the same routing layer.
+- [Overview](#overview)
+- [What the Application Does](#what-the-application-does)
+- [Architecture](#architecture)
+- [Reliability and Security](#reliability-and-security)
+- [Provider Coverage](#provider-coverage)
+- [Public Demo Data](#public-demo-data)
+- [Local Development](#local-development)
+- [Testing and CI](#testing-and-ci)
+- [Deployment](#deployment)
+- [Known Limitations](#known-limitations)
+- [License](#license)
+
+## Overview
+
+Weather and utility systems expose different data formats, timing models, and failure modes. Weather & Power normalizes those differences behind one FastAPI contract and presents the resulting information through a map-centered operational dashboard.
+
+The engineering focus is not simply rendering a weather page. The application demonstrates:
+
+- integration of heterogeneous public data sources;
+- normalization of multiple utility-outage platforms;
+- time-aware forecast and GIS visualization;
+- partial-failure handling when external systems are slow or unavailable;
+- serverless AWS delivery;
+- publication-safe synthetic portfolio data;
+- CI/CD using GitHub Actions and AWS OIDC;
+- bounded external-network and dependency controls.
+
+## What the Application Does
+
+### Weather and forecast context
+
+- Current weather observations with observation time.
+- Next-24-hours hourly outlook and temperature trend.
+- Time-aware forecast map layers for:
+  - Weather
+  - Temperature
+  - Precipitation probability
+  - Wind speed
+  - Hazards
+- Forecast-valid-time timeline with current/previous/next controls.
+- Active alert context and longer-duration forecast hazard guidance.
+- Source-derived forecast legends.
+
+### Power and site context
+
+- Public utility-provider routing based on the selected demonstration location.
+- Normalized nearby-outage information across different provider platforms.
+- Customers-out, distance, and restoration-estimate presentation when available.
+- Direct links to the selected site in Google Maps and the provider's public outage map.
+- State-aware freshness messaging:
+  - **LIVE LOOKUP** for a successful provider lookup;
+  - **RECENT RESULT** when a recent cached result is used after a live timeout;
+  - **UNAVAILABLE** when the provider result cannot be obtained.
+
+### Location workflow
+
+Visitors can select a demonstration location by:
+
+- searching by city or location name;
+- choosing a search suggestion;
+- clicking a demonstration-site pin on the map;
+- entering valid latitude/longitude coordinates.
+
+Internal synthetic site IDs remain deterministic lookup keys, but the public experience is intentionally location-first.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U[Browser] --> CF[CloudFront]
+
+    CF --> S3[S3 static frontend]
+    CF --> API[API Gateway HTTP API]
+    API --> L[AWS Lambda / FastAPI]
+
+    U --> ESRI[Esri basemap imagery]
+
+    L --> WX[Public weather and forecast services]
+    L --> R[Utility provider router]
+    R --> P[Public utility outage sources]
+```
+
+### Request flow
+
+1. **CloudFront** presents one public application hostname.
+2. Static HTML, CSS, JavaScript, locally hosted icons, and vendored Leaflet assets are served from **Amazon S3**.
+3. Requests under `/api/*` route through CloudFront to **API Gateway** and **AWS Lambda**.
+4. The FastAPI backend validates input and calls guarded public weather/forecast or utility-provider integrations.
+5. Provider-specific outage data is normalized into a common power-status model before it reaches the frontend.
+6. Esri basemap/reference tiles are the intentionally allowed direct browser-side external imagery dependency.
+
+### Backend
+
+- FastAPI
+- Mangum ASGI-to-Lambda adapter
+- Python 3.12
+- AWS Lambda
+- API Gateway HTTP API
+- provider-specific adapters behind a normalized routing layer
+- bounded outbound concurrency and hostname allowlisting
+
+### Frontend
+
+- static HTML/CSS/JavaScript
+- Leaflet 1.9.4 vendored locally
+- responsive map-centered dashboard
+- locally hosted weather/UI icons
+- same-origin application API calls
+
+## Reliability and Security
+
+The application is designed to degrade individual integrations instead of failing the entire status view.
+
+### Reliability controls
+
+- Weather and power work execute concurrently under separate response budgets.
+- Provider-specific calls use bounded timeouts.
+- Recent provider failures are temporarily suppressed to avoid repeatedly hammering a degraded upstream.
+- A recent successful power result can be used as a timeout fallback.
+- Forecast valid times, legends, and point-hazard metadata use dedicated short-lived caches.
+- Current weather/status application-level caching defaults to disabled in favor of fresh lookups.
+- Weather or power failure can degrade independently without destroying the other component.
+
+### Security and supply-chain controls
+
+- explicit outbound hostname allowlist;
+- TLS verification enabled by default;
+- bounded query, coordinates, forecast layer, WMS, and utility inputs;
+- API Gateway throttling;
+- generic client-facing error handling;
+- Content Security Policy and browser security headers;
+- GitHub Actions pinned to immutable commit SHAs;
+- exact Python dependency pins with `pip-audit`;
+- locally vendored Leaflet runtime with provenance, license, and Git-blob integrity checks;
+- publication-safety CI scanning;
+- GitHub Actions deployment through AWS OIDC instead of stored long-lived AWS access keys.
+
+The in-process FastAPI token bucket is a best-effort secondary control. API Gateway throttling is the durable infrastructure-level request throttle.
 
 ## Provider Coverage
 
-The current application includes adapters for 12 utility/provider families:
+The current application contains adapters for these public utility/provider families:
 
 | Utility key | Provider |
 | --- | --- |
@@ -29,91 +167,27 @@ The current application includes adapters for 12 utility/provider families:
 | `PRAIRIE_LAND_ELECTRIC` | Prairie Land Electric Cooperative |
 | `NINNESCAH_RURAL_ELECTRIC` | Ninnescah Rural Electric Cooperative |
 
-Provider implementations normalize different public outage-data formats into the application's common response model. Third-party endpoints can change independently of this project, so individual integrations may require maintenance over time.
+Third-party outage systems can change independently of this project. Individual adapters may therefore require maintenance over time, and provider availability or restoration estimates should be treated as advisory.
 
-## Synthetic Demo Dataset
+## Public Demo Data
 
-`app/data/sites.json` contains **synthetic portfolio records only**. The demo records preserve the application's richer site schema without publishing operational facility data, real addresses, contact numbers, or stored outage-map URLs.
+`app/data/sites.json` contains synthetic demonstration locations rather than operational facilities.
 
-Representative IDs include:
+The public repository intentionally avoids committing:
 
-- `DEMO_OKC_01` — OGE
-- `DEMO_TUL_01` — PSO
-- `DEMO_KCK_01` — EVERGY
-- `DEMO_DAL_01` — ONCOR
-- `DEMO_AUS_01` — Austin Energy
-- `DEMO_PEC_01` — PEC
-- `DEMO_AEP_01` — AEP Texas
-- `DEMO_CNP_01` — CenterPoint
-- `DEMO_EPE_01` — El Paso Electric
-- `DEMO_CEC_01` — Concordia Electric
-- `DEMO_PLE_01` — Prairie Land Electric
-- `DEMO_NRE_01` — Ninnescah Rural Electric
+- private facility addresses;
+- internal infrastructure details;
+- contact information;
+- organization-specific network information;
+- populated secret/configuration files.
 
-The test suite enforces coverage for all 12 canonical utility keys and verifies the synthetic-data contract.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    U[Browser] --> CF[CloudFront]
-    CF --> S3[S3 Static Frontend]
-    U --> APIGW[API Gateway HTTP API]
-    APIGW --> L[AWS Lambda / FastAPI]
-    L --> NWS[National Weather Service]
-    L --> R[Provider Router]
-    R --> P[Public Utility Outage Sources]
-```
-
-### Backend
-
-- FastAPI application
-- Mangum ASGI-to-Lambda adapter
-- AWS Lambda on Python 3.12
-- API Gateway HTTP API
-- provider router with normalized response models
-- outbound hostname allowlist and concurrency controls
-- provider health/cache behavior for degraded upstream conditions
-
-### Frontend
-
-- static HTML/CSS/JavaScript
-- deployed independently to Amazon S3
-- compatible with CloudFront delivery
-
-### Deployment
-
-`template.yaml` defines the SAM backend. The deployment workflow uses GitHub Actions and AWS OIDC rather than long-lived AWS access keys. Deployment is intentionally **manual-only** now that the portfolio project is finalized, which prevents routine pushes from consuming deployment minutes or changing the live environment unexpectedly.
-
-The current API Gateway defaults are deliberately bounded:
-
-- throttling rate: **4 requests/second**
-- throttling burst: **8 requests**
-- Lambda timeout: **30 seconds**
-- Lambda memory: **1024 MB**
-
-## Security and Reliability Controls
-
-The public lineage includes:
-
-- latitude/longitude validation and bounded query inputs
-- explicit utility/provider routing allowlists
-- API Gateway throttling
-- security response headers
-- reduced client-facing exception leakage
-- outbound hostname restrictions
-- bounded outbound concurrency
-- provider timeout and fallback behavior
-- pinned runtime and development dependencies
-- `pip-audit` in CI
-- compile/import and Ruff failure checks
-- synthetic-data contract tests
-- generic publication-safety scanning for private-key material, cloud-account identifiers, private IP ranges, and internal DNS suffixes
-- credential-like provider values excluded from source code
+The synthetic locations preserve realistic routing, provider, map, and card behavior without publishing private operational data.
 
 ## Local Development
 
-Python 3.12 is the target runtime.
+Python 3.12 is the target backend runtime.
+
+### Linux/macOS
 
 ```bash
 python -m venv .venv
@@ -124,17 +198,27 @@ PYTHONPATH=. pytest -q tests
 uvicorn app.api:app --reload
 ```
 
-On Windows PowerShell, activate the virtual environment with `.venv\Scripts\Activate.ps1`.
+### Windows PowerShell
 
-The health endpoint is available at:
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt -r requirements-dev.txt
+$env:PYTHONPATH = "."
+pytest -q tests
+uvicorn app.api:app --reload
+```
+
+Health check:
 
 ```text
 GET /healthz
 ```
 
-## Optional El Paso Electric Configuration
+### Optional El Paso Electric configuration
 
-The El Paso Electric adapter intentionally does **not** contain embedded credential-like defaults. If you intend to enable that provider, supply these values through the runtime environment:
+The El Paso Electric adapter does not contain embedded credential-like defaults. If that provider is enabled in another deployment, supply:
 
 ```text
 EPE_API_KEY
@@ -145,56 +229,76 @@ EPE_ENCRYPTION_KEY
 
 ## Testing and CI
 
-The portfolio workflow runs on pull requests to `main` and can also be started manually. It performs:
+**Portfolio CI** runs for pull requests to `main` and can also be started manually.
 
-1. dependency installation
-2. runtime dependency checks
-3. Python compilation and targeted Ruff checks
-4. frontend contract checks
-5. the pytest suite
-6. `pip-audit` with no vulnerability suppressions
-7. a generic publication-safety scan
+It validates:
 
-The separate deployment workflow is manual-only and repeats syntax/tests/audit checks before SAM deployment.
+1. dependency installation;
+2. runtime dependency imports;
+3. Python compilation and targeted Ruff checks;
+4. frontend JavaScript and UI contract checks;
+5. vendored Leaflet version/license/integrity assertions;
+6. the pytest suite;
+7. `pip-audit`;
+8. publication-safety scanning.
 
-## AWS Deployment
+The repository also protects customer-facing behavior with contract checks for important map, forecast, card, dependency, and UI requirements.
 
-To use the deployment workflow in another AWS account, provide your own repository variables/secrets for the deployment region, stack/bucket names, and OIDC roles.
+## Deployment
 
-High-level flow:
+Production publication is intentionally manual.
+
+### Full application deploy
+
+**Deploy Weather-and-Power App (SAM)** performs:
 
 ```text
 Manual workflow dispatch
-    -> GitHub Actions checks
+    -> validation/tests/dependency audit
     -> AWS OIDC authentication
     -> SAM build / validate / deploy
-    -> frontend sync to S3
+    -> S3 frontend sync
+    -> CloudFront invalidation
 ```
 
-No AWS account IDs, private registry locations, internal domains, or organization-specific network ranges are required by the application source.
+Use this workflow when backend code, infrastructure, or backend dependencies change.
 
-## Design Notes
+### Frontend-only deploy
 
-- Provider latency and availability vary during severe-weather events.
-- Restoration estimates are third-party data and should be treated as advisory.
-- Some provider adapters perform discovery/caching to cope with changing upstream map structures.
-- The application exposes a consistent API even though upstream utilities use different technologies and data shapes.
-- This serverless lineage is intentionally separate from the project's container/Kubernetes deployment lineage.
+**Deploy Weather-and-Power Frontend Only** performs:
 
-## Portfolio Focus
+```text
+Manual workflow dispatch
+    -> frontend validation
+    -> AWS OIDC authentication
+    -> S3 frontend sync
+    -> CloudFront invalidation
+```
 
-The project demonstrates:
+Use this workflow for HTML/CSS/JavaScript/static-asset changes that do not require Lambda or CloudFormation changes.
 
-- serverless API design
-- FastAPI/Lambda integration
-- multi-provider normalization
-- defensive integration with external systems
-- synthetic-data sanitization
-- cloud deployment automation
-- AWS OIDC-based CI/CD
-- dependency and publication security gates
-- operational resilience and degraded-provider handling
+Both deployment workflows share one concurrency group so a frontend-only release cannot race a full application deployment.
+
+### Runtime defaults
+
+- API Gateway throttle: **4 requests/second**
+- API Gateway burst: **8 requests**
+- Lambda timeout: **30 seconds**
+- Lambda memory: **1024 MB**
+
+## Known Limitations
+
+- Public weather and utility systems can change independently of this repository.
+- Utility restoration estimates and outage availability vary by provider.
+- Forecast hazards and active warnings are different data concepts and should not be interpreted as interchangeable.
+- The in-process application rate limiter is not a globally distributed throttle.
+- Mobile layout is supported responsively, but the product is optimized primarily for a desktop operational dashboard.
+- The application is a public portfolio implementation, not an authoritative emergency-management or utility operations system.
 
 ## License
 
-GPL-3.0
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
+
+See [LICENSE](LICENSE) for the full license text.
+
+Third-party frontend assets retain their own applicable licenses and notices under the repository's static/vendor asset directories.
